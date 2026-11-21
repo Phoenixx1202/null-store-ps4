@@ -17,13 +17,13 @@ test-sony-art: build/test_sony_art
 snapshot: build/catalog_parser
 	$(PYTHON) tools/scrape_sources.py --all
 build/torrent_host.o: src/torrent.c src/data_root.h src/torrent.h src/torrent_resume.h src/torrent_checkpoint.h src/path_info.h
-	$(HOST_CC) -DPORTAL_HOST -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE -std=c11 -O1 -g -fsanitize=address,undefined -c $< -o $@
+	$(HOST_CC) -D_DEFAULT_SOURCE -DPORTAL_HOST -D_POSIX_C_SOURCE=200809L -std=c11 -O1 -g -fsanitize=address,undefined -c $< -o $@
 build/torrent_driver: tests/torrent_driver.c build/torrent_host.o
-	$(HOST_CC) -std=c11 -O1 -g -fsanitize=address,undefined $^ -o $@
+	$(HOST_CC) -D_DEFAULT_SOURCE -std=c11 -O1 -g -fsanitize=address,undefined $^ -o $@
 build/test_torrent_unit: tests/test_torrent_unit.c src/torrent.c src/torrent.h src/torrent_resume.h src/torrent_checkpoint.h src/path_info.h
-	$(HOST_CC) -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE -std=c11 -O1 -g -fsanitize=address,undefined $< -o $@
+	$(HOST_CC) -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L -std=c11 -O1 -g -fsanitize=address,undefined $< -o $@
 build/test_torrent_socket: tests/test_torrent_socket.c src/torrent.c src/torrent.h src/net_compat.h src/torrent_resume.h src/torrent_checkpoint.h src/path_info.h
-	$(HOST_CC) -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE -std=c11 -O1 -g -fsanitize=address,undefined $< -o $@
+	$(HOST_CC) -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L -std=c11 -O1 -g -fsanitize=address,undefined $< -o $@
 build/test_download_manager: tests/test_download_manager.cpp src/download_manager.cpp src/download_manager.h src/download_model.h src/queue_store.h build/torrent_host.o
 	$(HOST_CXX) -DPORTAL_HOST -std=c++17 -O1 -g -fsanitize=address,undefined tests/test_download_manager.cpp src/download_manager.cpp src/debrid.cpp build/torrent_host.o -lpthread -o $@
 build/queue_driver: tests/queue_driver.cpp src/download_manager.cpp src/download_manager.h src/queue_store.h build/torrent_host.o
@@ -61,7 +61,7 @@ test-provider-cache: build/test_provider_cache
 build/test_service_files: tests/test_service_files.cpp src/service_files.h src/path_info.h src/queue_store.h
 	$(HOST_CXX) -std=c++17 -O1 -g -fsanitize=address,undefined $< -o $@
 build/test_file_info: tests/test_file_info.c src/path_info.h
-	$(HOST_CC) -D_DARWIN_C_SOURCE -std=c11 -O1 -g -fsanitize=address,undefined $< -o $@
+	$(HOST_CC) -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -std=c11 -O1 -g -fsanitize=address,undefined $< -o $@
 test: test-service-files
 .PHONY: test-service-files
 test-service-files: build/test_service_files build/test_file_info
