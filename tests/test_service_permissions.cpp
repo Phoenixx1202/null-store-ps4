@@ -2,7 +2,10 @@
 #define PORTAL_HOST
 #endif
 // Opaque test-only placeholders for APIs absent from macOS; never used by mocks.
+// glibc declares them itself.
+#ifdef __APPLE__
 typedef int pthread_barrier_t;typedef int pthread_barrierattr_t;
+#endif
 #include "../src/service_start_ps4.cpp"
 #include <cassert>
 #include <cstdarg>
