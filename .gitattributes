@@ -1,0 +1,9 @@
+# Every text file is LF in the repository and in the working tree: the PS4 reads
+# the assets as they are, and the build verifies some of them by hash.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ttf binary
+*.prx binary
+*.pkg binary
+assets/FONT-LICENSE.txt -text

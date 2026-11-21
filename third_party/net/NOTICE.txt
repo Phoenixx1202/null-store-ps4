@@ -1,0 +1,20 @@
+Vendored net transport
+======================
+
+Socket.cpp/h, SocketErrors.h, TrustStore.cpp/h, Url.cpp/h and core/Platform.h
+are copied unmodified from the Duskaryon_V3.1 project (Native/DuskaryonMedia/
+vendor/net, revision of 2026-11), which in turn follows OpenOrbis'
+net/Socket.cpp and HttpsClient.cpp patterns. They are the raw-socket and
+BearSSL glue the PlayStation Store DNS bypass of src/network_bypass.cpp uses.
+
+Upstream references:
+  https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain (BSD-2-Clause)
+  BearSSL, third_party/bearssl (MIT; see third_party/bearssl/LICENSE)
+
+upstream.json records the SHA-256 of each copied file. The Socket.cpp entry
+differs from Duskaryon's own record: that project's upstream.json is stale
+relative to its working copy; the hash below is of the file actually copied,
+verified byte-identical to the Duskaryon_V3.1 working tree.
+
+No license text accompanies these files in Duskaryon's tree; they are covered
+by the notices above and by the project's own license notices.

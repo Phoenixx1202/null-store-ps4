@@ -11,9 +11,10 @@ Install the latest NULL_store package with HEN active and keep the PS4 awake dur
 | Check | What to do | What to look for |
 | --- | --- | --- |
 | Browse and search | Open the catalogue. Press **Triangle** to search, then **Square** to save a favorite. | Search narrows results and the saved title appears in Favorites. |
-| Try a download | Press **R3** for Downloads, then **L3** and choose **Test torrent connection (one piece only)**. | The test stops after about 256 KB. Peer availability varies; no peers may be found on some networks. |
+| Try a download | Open a game, choose **Download**, then press **R1** until **Downloads** is selected. | The job appears in the queue and starts transferring. Peer availability varies; no peers may be found on some networks. |
+| Cancel a download | Highlight a job in Downloads and press **Square**. | The job disappears at once and its files are deleted from the console. |
 | Resume a transfer | Start an authorized transfer long enough to pause. Pause it, close the app, reopen it, and resume. | The same job remains listed and continues from saved progress. |
-| Test Background Service | In Downloads, press **L3** and select **Start / Install service**. Alternatively, open the optional **NULL_store Background Service** app and press **X**. Wait until Downloads shows **Connected**, start a transfer, close NULL_store, wait, then reopen it. Keep the console awake and HEN active. | The transfer should advance while NULL_store is closed. This is the feature that needs the most additional testing across firmware/HEN versions. |
+| Test Background Service | Open the **NULL_store Background Service** app and press **X**. Wait until Downloads shows **Connected**, start a transfer, close NULL_store, wait, then reopen it. Keep the console awake and HEN active. | The transfer should advance while NULL_store is closed. This is the feature that needs the most additional testing across firmware/HEN versions. |
 | Install a PKG | Highlight a completed download with a compatible, complete PKG. Press **Triangle**, select the package, and confirm. | The status should reach **Installed**. The PS4 may omit percentages; check Notifications for the system result. |
 
 ## Known limitations

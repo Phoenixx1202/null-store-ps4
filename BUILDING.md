@@ -4,20 +4,58 @@ The application, optional service, torrent engine, installer adapter and host te
 
 ## Requirements
 
-The provided Makefile targets macOS with Apple command-line tools, Python 3, Pillow, Homebrew LLVM/LLD, and the [OpenOrbis PS4 toolchain](https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain). Set `OO_PS4_TOOLCHAIN` to the toolchain directory and `LLVM` to the LLVM binary directory if they differ from the Makefile defaults. Packaging also needs LibOrbisPkg through the toolchain.
+- The [OpenOrbis PS4 toolchain](https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain), recent enough to declare the internal system modules (`ORBIS_SYSMODULE_INTERNAL_PAD`); the v0.5.2 installer is too old. Set `OO_PS4_TOOLCHAIN` to its folder, or pass it to `make`.
+- LLVM: `clang`, `clang++` and `ld.lld` on `PATH`, or `LLVM=<folder>`. macOS defaults to Homebrew LLVM/LLD.
+- GNU Make and Python 3. Pillow is only needed by `make icons`.
+- Windows: Git for Windows. The Makefile runs its recipes with Git's `sh`, so `make` works from PowerShell, cmd or Git Bash.
+
+```
+make eboot OO_PS4_TOOLCHAIN=D:/path/to/OpenOrbis-PS4-Toolchain
+```
+
+`make eboot` builds and fake-signs the store executable. `make` builds the store package and `make service-package` the setup app; both need the assets below. LibOrbisPkg comes with the toolchain.
+
+## Source layout
+
+| Folder | Contents |
+| --- | --- |
+| `src/app` | Application loop, catalogue refresh worker |
+| `src/ui` | Store state (`StoreState`), screens (`StoreView`), shared widgets and controller keys (`Widgets`), game tiles (`CoverCache`: official icon, or the source's cover) and backgrounds (`GameArt`), colours and layout metrics (`Theme.h`) |
+| `src/graphics` | Batched 2D renderer, glyph atlas, images, the OpenGL ES backend |
+| `src/platform/ps4` | Piglet (EGL) context, DualShock 4 |
+| `src/platform/host` | Software render backend for the PC preview |
+| `src/input`, `src/core` | Controller actions and key-repeat, geometry, log |
+| `src/*.cpp`, `src/*.h`, `src/torrent.c` | Catalogue sources, downloads, torrent engine, installer, background service |
+| `third_party` | Piglet shader binaries (SDL2 PS4 port, zlib licence), stb, libwebp's decoder, BearSSL (MIT) and the `net` transport (OpenOrbis patterns) used by the PlayStation Store DNS bypass |
+
+The store draws with Piglet, the console's OpenGL ES 2.0 implementation (`libScePigletv2VSH`). Retail firmware has no shader compiler, so the renderer links the precompiled shader pair in `third_party/piglet_shaders`. Everything on screen is a textured quad with premultiplied alpha, collected per frame and drawn with one call per texture run.
+
+## PC preview
+
+`make preview` builds `build/preview` with the host compiler and writes one PNG per screen to `build/preview/`. It runs the same `StoreView` layout code through a software backend, so layout work can be checked without a console. Cover art is shown when `assets/covers/` or `build/preview-data/covers/` contain `<id>.jpg` files. On Windows it uses the Microsoft toolchain behind `clang++` and the small POSIX shims in `tools/win_compat`.
+
+The preview does not exercise Piglet itself: test on a PS4 before releasing.
 
 ## Assets and package build
 
 Generated packages, console runtime modules, the compatibility helper, cover images and the generated cover archive are not included in the source tree. The package targets require additional assets, including:
 
-- `sce_module/libc.prx` and `sce_module/libSceFios2.prx`, from a compatible OpenOrbis toolchain setup.
+- `sce_module/libc.prx` and `sce_module/libSceFios2.prx`. The Makefile copies them from the toolchain's `samples/piglet/sce_module` when they are missing.
 - `assets/service/compat-jb.prx`, the Itemzflow compatibility module linked in the README, and `assets/service/COMPAT-PROVENANCE.txt`. Follow the upstream license and retain its notices when redistributing it.
-- `assets/covers/*.jpg`, then `make assets/covers.pack`. Cover images can be collected for the bundled catalogue with `mkdir -p assets/covers && python3 tools/scrape_sources.py --covers-only`; third-party sites can be unavailable or change their pages. Respect site terms and artwork rights.
+- `assets/covers/*.jpg`, then `make assets/covers.pack`. Cover images can be collected for the bundled catalogue with `mkdir -p assets/covers && python3 tools/scrape_sources.py --covers-only`; third-party sites can be unavailable or change their pages. Respect site terms and artwork rights. Without them the package is built with an empty archive and the store shows placeholders until it has cached artwork itself.
 
-After supplying these inputs, run `make` for the store and `make service-package` for the setup app. The Makefile also generates the service executable and package metadata. Rebuilding has not been verified from a fresh toolchain checkout; missing tools or compatible runtime modules may need additional setup.
+After supplying these inputs, run `make` for the store and `make service-package` for the setup app. The Makefile also generates the service executable and package metadata.
+
+`make test-package` builds `build/NULL_store-test-no-service.pkg` without the compatibility module, for trying a build on a console: everything works except installing or starting the background service.
+
+Text assets are verified by hash and read by the console as they are, so `.gitattributes` keeps every text file LF on all platforms.
+
+## GitHub Actions
+
+`.github/workflows/build.yml` builds on every push (any branch), every pull request and on demand (Actions > Build > Run workflow). It installs LLVM on Ubuntu, downloads the OpenOrbis toolchain release named in `OPENORBIS_VERSION` (v0.5.4), runs `make test-package` and uploads `NULL_store-PS4-<version>.pkg` with its SHA-256 as the `NULL_store-PS4` artifact. The version comes from `APP_VER` in `tools/package.py`. Like the test package, it leaves out the background service's compatibility module. A second job runs the host checks.
 
 ## Host checks
 
-`make test` runs the host suite on macOS using the OpenOrbis headers. Some UI tests also require the cover archive and individual covers. `make preview` creates a software-rendered catalogue image in `build/preview.png`. These checks do not replace testing on a PS4.
+`make test` runs the host suite on macOS or Linux using the OpenOrbis headers (`tests/tests.mk`); it needs POSIX and is not available with the Microsoft toolchain. These checks and the preview do not replace testing on a PS4.
 
 The certificate bundle, SDK notices and installer provenance retain their respective notices under `assets/`. The Itemzflow helper is a separate upstream component and its source is linked in the README.

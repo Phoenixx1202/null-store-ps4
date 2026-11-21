@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
 import sys, struct, xml.etree.ElementTree as ET
-import fcntl, subprocess, tempfile
+import subprocess, tempfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 PKG_LOCK=ROOT/'build/.pkg-build.lock'
 CID='IV0000-NULL00001_00-NULLSTOR00000000'
+def lock_exclusive(handle):
+    """Hold the build lock until the file is closed (POSIX flock, or the Windows equivalent)."""
+    try:
+        import fcntl
+        fcntl.flock(handle,fcntl.LOCK_EX)
+    except ImportError:
+        import msvcrt
+        handle.seek(0);msvcrt.locking(handle.fileno(),msvcrt.LK_LOCK,1)
 def build_package(project,output,tool):
     project=Path(project).resolve();output=Path(output).resolve();output.mkdir(parents=True,exist_ok=True)
     # Concurrent native packagers produced zero-filled assets despite valid PKG
     # digests. Serialize them and give each build its own output staging folder.
     PKG_LOCK.parent.mkdir(parents=True,exist_ok=True)
     with PKG_LOCK.open('a') as lock:
-        fcntl.flock(lock,fcntl.LOCK_EX)
+        lock_exclusive(lock)
         with tempfile.TemporaryDirectory(prefix='pkg-stage-',dir=output) as temporary:
             subprocess.run([str(Path(tool).resolve()),'pkg_build',str(project),temporary],cwd=project.parent,check=True)
             packages=list(Path(temporary).glob('*.pkg'))
@@ -20,7 +28,11 @@ def build_package(project,output,tool):
 def build():
     build_package(ROOT/'pkg.gp4',ROOT/'build',sys.argv[2])
 def sfo(title="NULL_store",title_id="NULL00001"):
-    entries={'APP_TYPE':1,'APP_VER':'1.00','ATTRIBUTE':0,'CATEGORY':'gd','CONTENT_ID':CID,'DOWNLOAD_DATA_SIZE':0,'SYSTEM_VER':0,'TITLE':title,'TITLE_ID':title_id,'VERSION':'1.00'}
+    # CATEGORY gde: Piglet draws through the system compositor, which a game
+    # title (gd) cannot open - eglGetDisplay fails there.
+    # ATTRIBUTE 32 (0x20): the system's dialogs (the keyboard) use the console's
+    # own confirm button; with 0 they confirm with Circle, the Japanese layout.
+    entries={'APP_TYPE':1,'APP_VER':'01.01','ATTRIBUTE':32,'CATEGORY':'gde','CONTENT_ID':CID,'DOWNLOAD_DATA_SIZE':0,'SYSTEM_VER':0,'TITLE':title,'TITLE_ID':title_id,'VERSION':'01.01'}
     caps={'APP_VER':8,'VERSION':8,'CATEGORY':4,'CONTENT_ID':48,'TITLE':128,'TITLE_ID':12}
     keys=bytearray(); data=bytearray(); rows=[]
     for k,v in sorted(entries.items()):

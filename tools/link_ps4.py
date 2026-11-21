@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Link on local storage, then durably publish ELF to the external workspace."""
-import hashlib,os,subprocess,sys,tempfile
+import hashlib,os,shutil,subprocess,sys,tempfile
 from pathlib import Path
 args=sys.argv[1:];at=args.index('-o')+1;target=Path(args[at])
-with tempfile.TemporaryDirectory(prefix='nullstore-link-',dir='/tmp') as folder:
+# Windows only starts "ld.lld" when it is given the full ld.lld.exe path.
+args[0]=shutil.which(args[0]) or args[0]
+with tempfile.TemporaryDirectory(prefix='nullstore-link-') as folder:
     args[at]=str(Path(folder)/'output.elf')
     subprocess.run(args,check=True)
     data=Path(args[at]).read_bytes()
