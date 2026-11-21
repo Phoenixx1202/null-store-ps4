@@ -30,7 +30,7 @@ static std::string imeDecode(const char16_t*in,size_t capacity){
 }
 static bool imeError(const char*stage,int code,std::string&error){char text[200];snprintf(text,sizeof text,"%s (0x%08X).",stage,(unsigned)code);error=text;IME_LOG("native keyboard error: stage=%s code=0x%08X",stage,(unsigned)code);return false;}
 NativeTextInput::~NativeTextInput(){if(opened){sceImeDialogAbort();sceImeDialogTerm();}}
-bool NativeTextInput::begin(int user,const std::string&initial,std::string&error){
+bool NativeTextInput::begin(int user,const std::string&initial,std::string&error,const char16_t*title,const char16_t*placeholder,bool search){
     error.clear();if(opened){error="The PS4 keyboard is already open.";return false;}if(user<0){error="Sign in to a PS4 user to open its keyboard.";return false;}
     if(!ready){
         int r=(int)sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_COMMON_DIALOG);IME_LOG("native keyboard CommonDialog module: 0x%08X",(unsigned)r);if(r)return imeError("Could not load PS4 dialogs",r,error);
@@ -38,9 +38,9 @@ bool NativeTextInput::begin(int user,const std::string&initial,std::string&error
         r=sceSysmoduleLoadModule(ORBIS_SYSMODULE_IME_DIALOG);if(r)return imeError("Could not load PS4 keyboard",r,error);
         r=sceCommonDialogInitialize();IME_LOG("native keyboard CommonDialog initialize: 0x%08X",(unsigned)r);if(r)return imeError("Could not initialize PS4 dialogs",r,error);ready=true;
     }
-    if(sceCommonDialogIsUsed()){error="Another PS4 dialog is open. Close it before searching.";return false;}
-    memset(buffer,0,sizeof buffer);imeEncode(initial,buffer,129);OrbisImeDialogSetting p={};p.userId=(uint32_t)user;p.type=ORBIS_TYPE_DEFAULT;p.enterLabel=ORBIS_BUTTON_LABEL_SEARCH;p.maxTextLength=128;
-    p.inputTextBuffer=reinterpret_cast<wchar_t*>(buffer);p.title=reinterpret_cast<const wchar_t*>(u"Search games");p.placeholder=reinterpret_cast<const wchar_t*>(u"Game title");
+    if(sceCommonDialogIsUsed()){error="Another PS4 dialog is open. Close it first.";return false;}
+    memset(buffer,0,sizeof buffer);imeEncode(initial,buffer,129);OrbisImeDialogSetting p={};p.userId=(uint32_t)user;p.type=ORBIS_TYPE_DEFAULT;p.enterLabel=search?ORBIS_BUTTON_LABEL_SEARCH:ORBIS_BUTTON_LABEL_DEFAULT;p.maxTextLength=128;
+    p.inputTextBuffer=reinterpret_cast<wchar_t*>(buffer);p.title=reinterpret_cast<const wchar_t*>(title);p.placeholder=reinterpret_cast<const wchar_t*>(placeholder);
     int r=sceImeDialogInit(&p,nullptr);IME_LOG("native keyboard open: user=%d result=0x%08X",user,(unsigned)r);if(r)return imeError("Could not open PS4 keyboard",r,error);openingFrames=0;opened=true;return true;
 }
 NativeTextInput::Result NativeTextInput::poll(std::string&text,std::string&error){
