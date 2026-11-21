@@ -8,6 +8,7 @@ test: test-network
 test-network: build/test_network_ps4
 	./build/test_network_ps4
 build/test_sony_art: tests/test_sony_art.cpp src/sony_art.h
+	@mkdir -p build
 	$(HOST_CXX) -std=c++17 -O1 -g -fsanitize=address,undefined -Isrc $< -o $@
 .PHONY: test-sony-art
 test: test-sony-art
@@ -95,12 +96,14 @@ test: test-text-input
 test-text-input: build/test_text_input
 	./build/test_text_input
 build/test_debrid: tests/test_debrid.cpp src/debrid.cpp src/debrid.h src/json_lite.h src/catalog.h
+	@mkdir -p build
 	$(HOST_CXX) -DPORTAL_HOST -std=c++17 -O1 -g -fsanitize=address,undefined -Isrc tests/test_debrid.cpp src/debrid.cpp -o $@
 .PHONY: test-debrid
 test: test-debrid
 test-debrid: build/test_debrid
 	./build/test_debrid
 build/test_i18n: tests/test_i18n.cpp src/ui/I18n.cpp src/ui/I18n.h
+	@mkdir -p build
 	$(HOST_CXX) -std=c++17 -O1 -g -fsanitize=address,undefined -Isrc tests/test_i18n.cpp src/ui/I18n.cpp -o $@
 .PHONY: test-i18n
 test: test-i18n
