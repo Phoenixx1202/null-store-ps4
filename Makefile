@@ -90,10 +90,11 @@ build/queue_driver: tests/queue_driver.cpp src/download_manager.cpp src/download
 	/usr/bin/clang++ -DPORTAL_HOST -std=c++11 -O1 -g -fsanitize=address,undefined tests/queue_driver.cpp src/download_manager.cpp build/torrent_host.o -lpthread -o $@
 build/test_installer: tests/test_installer.cpp src/installer.cpp src/installer.h src/queue_store.h src/path_info.h src/install_log.h src/bgft_abi.h
 	/usr/bin/clang++ -DPORTAL_HOST -std=c++11 -O1 -g -fsanitize=address,undefined tests/test_installer.cpp src/installer.cpp -lpthread -o $@
-test: build/controller-driver build/test_service_permissions build/test_sources build/torrent_driver build/test_torrent_unit build/test_torrent_socket build/test_download_manager build/queue_driver build/test_installer build/portal-service-host build/service-client-driver
+test: build/controller-driver build/test_service_permissions build/test_sources build/test_sources_server build/torrent_driver build/test_torrent_unit build/test_torrent_socket build/test_download_manager build/queue_driver build/test_installer build/portal-service-host build/service-client-driver
 	python3 -m unittest discover -s tests -v
 	./build/test_service_permissions
 	./build/test_sources
+	./build/test_sources_server
 	./build/test_torrent_unit
 	./build/test_torrent_socket
 	./build/test_download_manager
@@ -109,6 +110,8 @@ build/service-client-driver: tests/service_client_driver.cpp src/service_client.
 
 build/test_sources: tests/test_sources.cpp src/sources.h src/source_model.h src/json_min.h src/catalog.h src/providers.h
 	/usr/bin/clang++ -DPORTAL_HOST -std=c++11 -O1 -g -fsanitize=address,undefined $< -o $@
+build/test_sources_server: tests/test_sources_server.cpp src/sources_server.cpp src/sources_server.h src/sources.h src/source_model.h
+	/usr/bin/clang++ -DPORTAL_HOST -std=c++11 -O1 -g -fsanitize=address,undefined tests/test_sources_server.cpp src/sources_server.cpp -lpthread -o $@
 build/test_service_permissions: tests/test_service_permissions.cpp src/service_start_ps4.cpp src/service_protocol.cpp src/service_files.h src/service_setup_log.h src/path_info.h
 	/usr/bin/clang++ -DPORTAL_HOST -std=c++11 -O1 -g -fsanitize=address,undefined -idirafter $(OO_PS4_TOOLCHAIN)/include tests/test_service_permissions.cpp src/service_protocol.cpp -lpthread -o $@
 build/controller-driver: tests/controller_driver.cpp src/download_controller.cpp src/download_controller.h src/service_client.cpp src/download_manager.cpp src/service_protocol.cpp src/queue_store.h src/catalog.h src/providers.h build/torrent_host.o

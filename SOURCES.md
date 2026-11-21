@@ -5,12 +5,17 @@ refreshed from those sites' public listing pages.
 
 ## Installing a source list
 
-1. Create the file on a computer. Start from the example below.
-2. Put it at `NULL_store/sources.json` on a USB stick.
-3. Insert the stick and start NULL_store. The app copies the file on first run.
-4. Press **Options** to build the library. Cached games are kept between launches.
+**From your phone (easiest).** Open **Sources** in the app (L3). The screen shows an
+address like `http://192.168.1.40:8090/418302` and that six-digit code. Type it into your
+phone's browser on the same Wi-Fi, fill in the form, press **Test** to check the page
+parses, then **Add source**. Press **Options** to build the library.
 
-Deleting `sources.json` returns the app to the empty state.
+**From a USB stick.** Create the file on a computer, put it at
+`NULL_store/sources.json` on the stick, insert it, and start NULL_store. The app copies it
+on first run, when it has no list of its own.
+
+The phone page writes the same file, so both routes mix freely. Deleting `sources.json`
+returns the app to the empty state.
 
 ## Format
 
@@ -73,7 +78,10 @@ descendant or pseudo selectors.
 
 ## Checking a source
 
-Press **Options** and watch the status line. `0 updated / 0 cached / 1 failed` with an empty
+Press **Test** on the phone page: it fetches page 1 and reports how many cards matched, so
+a wrong selector shows up as `0 games found` before you save anything.
+
+On the console, press **Options** and watch the status line. `0 updated / 0 cached / 1 failed` with an empty
 library means the page was fetched but no card matched `shape.item`, or the URL was not
 `https://` on that host. A working source reports `1 updated` and fills the grid.
 
