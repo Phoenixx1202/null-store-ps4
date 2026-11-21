@@ -49,7 +49,7 @@ The service does not download in rest mode or start automatically after a reboot
 
 ## Your sources, your library
 
-NULL_store ships no catalogue and no built-in sites. You add the sources you want, and the app builds a library from their public listing pages. Open **Sources** in the app (L3) and scan the address it shows into your phone: the page lets you add, test and remove sources. A `sources.json` file on a USB stick works too. **Options** refreshes the library.
+NULL_store ships no catalogue and no built-in sites. You add the sources you want, and the app builds a library from their public listing pages. Open **Sources** in the app (L3) and scan the QR code it shows with your phone: the page lets you add, test and remove sources. A `sources.json` file on a USB stick works too. **Options** refreshes the library.
 
 Each source declares its base URL, its listing page pattern, and how its game cards look. [SOURCES.md](SOURCES.md) documents the format.
 

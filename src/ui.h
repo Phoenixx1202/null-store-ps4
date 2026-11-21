@@ -2,6 +2,7 @@
 #include "download_paths.h"
 #include "download_model.h"
 #include "installer.h"
+#include "qr.h"
 #include <stdint.h>
 #include <cstring>
 #include <cmath>
@@ -34,7 +35,7 @@ inline Bitmap loadGreenCase(const std::string&p){Bitmap b=loadBitmapRGBA(p);for(
 inline Bitmap packedBitmap(const std::string&base,int id){Bitmap b;auto index=readFile(base+"/covers.idx");size_t at=0;unsigned long long offset=0;size_t length=0;bool found=false;while(at<index.size()){int key=0;if(sscanf(index.c_str()+at,"%d\t%llu\t%zu",&key,&offset,&length)==3&&key==id){found=true;break;}auto next=index.find('\n',at);if(next==std::string::npos)break;at=next+1;}if(!found||!length||length>3*1024*1024)return b;FILE*f=fopen((base+"/covers.pack").c_str(),"rb");if(!f)return b;std::vector<unsigned char>bytes(length);bool ok=!fseek(f,offset,SEEK_SET)&&fread(bytes.data(),1,length,f)==length;fclose(f);if(ok){int channels;auto p=stbi_load_from_memory(bytes.data(),bytes.size(),&b.w,&b.h,&channels,3);if(p){b.p.assign(p,p+b.w*b.h*3);stbi_image_free(p);}}return b;}
 enum Action{UP,DOWN,LEFT,RIGHT,CONFIRM,BACK,SEARCH,FAVORITE,TAB_PREV,TAB_NEXT,SORT,REFRESH,PAGE_PREV,PAGE_NEXT,DOWNLOADS,SERVICE,SELECT_SOURCE,REMOVE_DOWNLOAD};
 struct UI{
-    Canvas c;std::string setupURL,base,data,status="No sources yet | Press OPTIONS",query;Bitmap logo,caseFrame;std::vector<Game>games;std::vector<int>visible;std::set<int>favorites;std::map<int,Bitmap>covers;int selected=0,tab=0,sort=0,key=0;bool detail=false,keyboard=false,dirty=true;std::string notice;
+    Canvas c;std::string setupURL,setupQrFor,base,data,status="No sources yet | Press OPTIONS",query;Bitmap logo,caseFrame;QrSymbol setupQr;std::vector<Game>games;std::vector<int>visible;std::set<int>favorites;std::map<int,Bitmap>covers;int selected=0,tab=0,sort=0,key=0;bool detail=false,keyboard=false,dirty=true;std::string notice;
     std::vector<DownloadRow>jobs;int jobSelected=0,sourceSelected=0;std::vector<TorrentLink>sources;
     bool sourcePicker=false,sourceLoading=false,downloadRequest=false,enqueueRequest=false;Game downloadGame;
     std::string sourceError;
@@ -135,7 +136,12 @@ if(a==FAVORITE&&!keyboard){favorite();return;}if(a==BACK){if(keyboard)keyboard=f
         }
         if(servicePicker){c.rect(285,210,1590,785,bg);c.rect(385,250,1210,670,0x09291f);c.text("Background downloads / 1.0",435,315,43,white);c.lines("The separate service keeps transfers running after you close NULL_store. Keep the console awake.",435,380,29,muted,1110,2);const char*options[]={(serviceStatus.find("In-app")==0?"Install background service (recommended)":"Start / Install service"),(serviceStatus.find("In-app")==0?"Continue downloading in NULL_store":"Stop service; use in-app downloads"),"Test torrent connection (one piece only)","Change download location","Back"};for(int i=0;i<5;++i){int y=425+i*78;c.rect(435,y,1110,62,i==serviceSelected?cyan:0x124833);c.text(options[i],460,y+42,26,i==serviceSelected?bg:white,1050);}c.text("Current location: "+downloadLocationName(downloadLocationSelected),435,837,23,muted,1080);c.text("X  Select     CIRCLE  Close",435,882,25,white);}
         if(downloadLocationPicker){c.rect(285,210,1590,785,bg);c.rect(385,230,1210,735,0x09291f);c.text("Choose download location",435,292,42,white);c.text("New downloads will use this location. Existing jobs stay where they are.",435,330,23,muted,1100);for(int i=0;i<9;i++){int y=350+i*54;c.rect(435,y,1110,46,i==downloadLocationSelected?cyan:0x124833);c.text(downloadLocationName(i),455,y+32,22,i==downloadLocationSelected?bg:white,1060);}c.text("USB destinations are checked for write access when selected.",435,860,22,muted,1080);c.text("X  Use location     CIRCLE  Back",435,900,25,white);}
-        if(sourceFilterPicker){c.rect(385,235,1210,690,0x09291f);c.text("Sources",435,300,43,white);c.text(setupURL.empty()?"Add sources from your phone":("Phone: "+setupURL),435,346,26,cyan);for(int i=0;i<=int(sourceTable().items.size())&&i<6;i++){int y=390+i*78;c.rect(435,y,1110,65,i==sourceChoice?cyan:0x124833);c.text(i==0?"All sources":sourceName(i),460,y+43,29,i==sourceChoice?bg:white,1050);}c.text("X  Choose source     CIRCLE  Back",435,877,27,white);}
+        if(sourceFilterPicker){c.rect(385,235,1210,690,0x09291f);c.text("Sources",435,300,43,white);
+            if(setupQrFor!=setupURL){setupQrFor=setupURL;setupQr.size=0;if(!setupURL.empty())makeQrSymbol(setupURL,setupQr);}
+            if(setupQr.size){int scale=setupQr.scaleFor(300),px=setupQr.pixelsFor(300),ox=1245,oy=252;c.rounded(ox-10,oy-10,px+20,px+20,10,white);for(int y=0;y<setupQr.size;++y)for(int x=0;x<setupQr.size;++x)if(setupQr.dark(x,y))c.rect(ox+(x+4)*scale,oy+(y+4)*scale,scale,scale,0x06231a);c.text("Scan with your phone",435,352,26,cyan);c.lines(setupURL,435,392,21,muted,700,2);}
+            else{c.text("Phone setup unavailable",435,352,26,cyan);c.lines("Connect the console to Wi-Fi, or copy sources.json to NULL_store on a USB stick.",435,392,21,muted,700,2);}
+            for(int i=0;i<=int(sourceTable().items.size())&&i<5;i++){int y=470+i*72;c.rect(435,y,790,62,i==sourceChoice?cyan:0x124833);c.text(i==0?"All sources":sourceName(i),460,y+40,26,i==sourceChoice?bg:white,740);}
+            c.text("X  Choose source     CIRCLE  Back",435,877,27,white);}
         if(removePicker){c.rect(385,300,1210,560,0x09291f);c.text("Remove download?",435,370,42,white);c.lines("Choose whether to keep or permanently delete this download's files.",435,430,28,muted,1100,2);const char*choices[]={"Remove from Downloads / keep files","Remove and delete downloaded files","Back"};for(int i=0;i<3;i++){int y=540+i*85;c.rect(435,y,1110,65,i==removeChoice?cyan:0x124833);c.text(choices[i],455,y+43,28,i==removeChoice?bg:white,1060);}}
         if(!notice.empty()){c.rect(310,930,1530,65,0x563448);c.text(notice,335,973,26,white,1480);}dirty=false;
     }

@@ -5,10 +5,10 @@ refreshed from those sites' public listing pages.
 
 ## Installing a source list
 
-**From your phone (easiest).** Open **Sources** in the app (L3). The screen shows an
-address like `http://192.168.1.40:8090/418302` and that six-digit code. Type it into your
-phone's browser on the same Wi-Fi, fill in the form, press **Test** to check the page
-parses, then **Add source**. Press **Options** to build the library.
+**From your phone (easiest).** Open **Sources** in the app (L3). The screen shows a QR code
+and an address like `http://192.168.1.40:8090/418302`. Scan the code with your phone
+camera on the same Wi-Fi, or type the address. Fill in the form, press **Test** to check
+the page parses, then **Add source**. Press **Options** to build the library.
 
 **From a USB stick.** Create the file on a computer, put it at
 `NULL_store/sources.json` on the stick, insert it, and start NULL_store. The app copies it

@@ -10,6 +10,11 @@ INC="-isystem $PREFIX/include/c++/v1 -isystem $PREFIX/lib/clang/21/include -isys
 COMMON="$SYS -x c++ -std=c++11 $INC -DPORTAL_HOST -O1 -g"
 
 case "$1" in
+  compile-c)
+    shift
+    out="$1"; shift
+    "$CLANG" $SYS -x c -std=c11 -isystem "$PREFIX/lib/clang/21/include" -isystem "$PREFIX/include" -isystem "$PREFIX/include/aarch64-linux-android" -DPORTAL_HOST -O1 -g -c "$@" -o "$out"
+    ;;
   compile)
     shift
     out="$1"; shift

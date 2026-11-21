@@ -15,7 +15,7 @@ icons: assets/brand/nullstore-bag.png tools/build_icons.py
 	python3 tools/build_icons.py
 assets/brand/store-icon.png assets/brand/service-icon.png sce_sys/icon0.png: icons
 	@test -f $@
-build/main.o: src/ps4.cpp src/ui.h src/catalog.h src/download_controller.h src/service_client.h src/download_model.h src/providers.h src/installer.h src/network_ps4.h src/download_paths.h src/startup_ps4.h src/install_log.h
+build/main.o: src/ps4.cpp src/ui.h src/qr.h src/qrcodegen.h src/catalog.h src/download_controller.h src/service_client.h src/download_model.h src/providers.h src/installer.h src/network_ps4.h src/download_paths.h src/startup_ps4.h src/install_log.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
 build/download_manager.o: src/download_manager.cpp src/download_manager.h src/download_model.h src/providers.h src/catalog.h src/torrent.h src/queue_store.h src/network_ps4.h src/download_paths.h src/path_info.h
@@ -60,7 +60,7 @@ assets/service/daemon.sfo: tools/service_bundle.py
 	python3 tools/service_bundle.py
 build/download_controller.o: src/download_controller.cpp src/download_controller.h src/service_client.h src/download_manager.h src/catalog.h src/network_ps4.h
 	$(CC) $(CFLAGS) -c $< -o $@
-build/nullstore.elf: build/text_input_ps4.o tools/link_ps4.py build/download_controller.o build/main.o build/download_manager.o build/torrent.o build/service_client.o build/service_protocol.o build/service_start_ps4.o build/network_ps4.o build/installer.o build/installer_ps4.o
+build/nullstore.elf: build/qrcodegen.o build/text_input_ps4.o tools/link_ps4.py build/download_controller.o build/main.o build/download_manager.o build/torrent.o build/service_client.o build/service_protocol.o build/service_start_ps4.o build/network_ps4.o build/installer.o build/installer_ps4.o
 	python3 tools/link_ps4.py $(LD) --no-mmap-output-file -m elf_x86_64 -pie --script $(OO_PS4_TOOLCHAIN)/link.x --eh-frame-hdr -L$(OO_PS4_TOOLCHAIN)/lib $(OO_PS4_TOOLCHAIN)/lib/crt1.o $(filter %.o,$^) $(LIBS) -lSceImeDialog -lSceCommonDialog -o $@
 eboot.bin: build/nullstore.elf tools/installer-auth.hex Makefile
 	OO_PS4_TOOLCHAIN=$(OO_PS4_TOOLCHAIN) $(OO_PS4_TOOLCHAIN)/bin/macos/create-fself-macos -in=$< -out=build/nullstore.oelf --eboot $@ --ptype fake --paid 0x3100000000000002 --authinfo $(INSTALLER_AUTH_INFO)
@@ -74,8 +74,12 @@ build/$(CONTENT_ID).pkg: pkg.gp4
 	python3 tools/package.py build $(PKGTOOL)
 preview: build/preview
 	./build/preview
-build/preview: src/preview.cpp src/ui.h src/catalog.h src/providers.h src/download_model.h src/installer.h
-	/usr/bin/clang++ -DPORTAL_HOST -std=c++11 -O2 -Wno-unused-function -idirafter $(OO_PS4_TOOLCHAIN)/include src/preview.cpp -o $@
+build/preview: src/preview.cpp src/ui.h src/qr.h src/catalog.h src/providers.h src/download_model.h src/installer.h build/qrcodegen.host.o
+	/usr/bin/clang++ -DPORTAL_HOST -std=c++11 -O2 -Wno-unused-function -idirafter $(OO_PS4_TOOLCHAIN)/include src/preview.cpp build/qrcodegen.host.o -o $@
+build/qrcodegen.host.o: src/qrcodegen.c src/qrcodegen.h
+	/usr/bin/clang -DPORTAL_HOST -std=c11 -O2 -c $< -o $@
+build/qrcodegen.o: src/qrcodegen.c src/qrcodegen.h
+	$(CC) $(CFLAGS) -c $< -o $@
 build/torrent_host.o: src/torrent.c src/data_root.h src/torrent.h src/torrent_resume.h src/torrent_checkpoint.h src/path_info.h
 	/usr/bin/clang -DPORTAL_HOST -D_POSIX_C_SOURCE=200809L -std=c11 -O1 -g -fsanitize=address,undefined -c $< -o $@
 build/torrent_driver: tests/torrent_driver.c build/torrent_host.o
@@ -90,11 +94,12 @@ build/queue_driver: tests/queue_driver.cpp src/download_manager.cpp src/download
 	/usr/bin/clang++ -DPORTAL_HOST -std=c++11 -O1 -g -fsanitize=address,undefined tests/queue_driver.cpp src/download_manager.cpp build/torrent_host.o -lpthread -o $@
 build/test_installer: tests/test_installer.cpp src/installer.cpp src/installer.h src/queue_store.h src/path_info.h src/install_log.h src/bgft_abi.h
 	/usr/bin/clang++ -DPORTAL_HOST -std=c++11 -O1 -g -fsanitize=address,undefined tests/test_installer.cpp src/installer.cpp -lpthread -o $@
-test: build/controller-driver build/test_service_permissions build/test_sources build/test_sources_server build/torrent_driver build/test_torrent_unit build/test_torrent_socket build/test_download_manager build/queue_driver build/test_installer build/portal-service-host build/service-client-driver
+test: build/controller-driver build/test_service_permissions build/test_sources build/test_qr build/test_sources_server build/torrent_driver build/test_torrent_unit build/test_torrent_socket build/test_download_manager build/queue_driver build/test_installer build/portal-service-host build/service-client-driver
 	python3 -m unittest discover -s tests -v
 	./build/test_service_permissions
 	./build/test_sources
 	./build/test_sources_server
+	./build/test_qr
 	./build/test_torrent_unit
 	./build/test_torrent_socket
 	./build/test_download_manager
@@ -110,6 +115,8 @@ build/service-client-driver: tests/service_client_driver.cpp src/service_client.
 
 build/test_sources: tests/test_sources.cpp src/sources.h src/source_model.h src/json_min.h src/catalog.h src/providers.h
 	/usr/bin/clang++ -DPORTAL_HOST -std=c++11 -O1 -g -fsanitize=address,undefined $< -o $@
+build/test_qr: tests/test_qr.cpp src/qr.h src/qrcodegen.h src/qrcodegen.c
+	/usr/bin/clang++ -DPORTAL_HOST -std=c++11 -O1 -g -fsanitize=address,undefined tests/test_qr.cpp src/qrcodegen.c -o $@
 build/test_sources_server: tests/test_sources_server.cpp src/sources_server.cpp src/sources_server.h src/sources.h src/source_model.h
 	/usr/bin/clang++ -DPORTAL_HOST -std=c++11 -O1 -g -fsanitize=address,undefined tests/test_sources_server.cpp src/sources_server.cpp -lpthread -o $@
 build/test_service_permissions: tests/test_service_permissions.cpp src/service_start_ps4.cpp src/service_protocol.cpp src/service_files.h src/service_setup_log.h src/path_info.h
@@ -121,7 +128,7 @@ build/controller-driver: tests/controller_driver.cpp src/download_controller.cpp
 $(wildcard build/*.o): Makefile
 build/service_installer.o: src/service_installer.cpp src/display_ps4.h src/ui.h src/providers.h src/service_start_ps4.h
 	$(CC) $(CFLAGS) -c $< -o $@
-build/service-installer.elf: tools/link_ps4.py build/service_installer.o build/service_start_ps4.o build/service_protocol.o build/network_ps4.o
+build/service-installer.elf: build/qrcodegen.o tools/link_ps4.py build/service_installer.o build/service_start_ps4.o build/service_protocol.o build/network_ps4.o
 	python3 tools/link_ps4.py $(LD) --no-mmap-output-file -m elf_x86_64 -pie --script $(OO_PS4_TOOLCHAIN)/link.x --eh-frame-hdr -L$(OO_PS4_TOOLCHAIN)/lib $(OO_PS4_TOOLCHAIN)/lib/crt1.o $(filter %.o,$^) $(LIBS) -o $@
 build/service-installer.bin: build/service-installer.elf
 	OO_PS4_TOOLCHAIN=$(OO_PS4_TOOLCHAIN) $(OO_PS4_TOOLCHAIN)/bin/macos/create-fself-macos -in=$< -out=build/service-installer.oelf --eboot $@ --paid 0x3800000000000011
