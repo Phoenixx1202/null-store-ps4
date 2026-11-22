@@ -18,6 +18,7 @@ def main():
     (ROOT/'assets/service/daemon.sfo').write_bytes(result)
     # LibOrbisPkg omits nested assets named param.sfo; only use it at install time.
     (ROOT/'assets/service/sce_sys/param.sfo').unlink(missing_ok=True)
+    (ROOT/'assets/service/sce_module').mkdir(parents=True,exist_ok=True)
     for name in ('libc.prx','libSceFios2.prx'):
         (ROOT/'assets/service/sce_module'/name).write_bytes((ROOT/'sce_module'/name).read_bytes())
 if __name__=='__main__':main()

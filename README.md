@@ -1,7 +1,7 @@
 <div align="center">
   <img src="screenshots/nullstore-logo.png" width="160" alt="NULL_store logo">
   <h1>NULL_store</h1>
-  <p><strong>Source-driven game library and BitTorrent download manager for HEN-enabled consoles.</strong></p>
+  <p><strong>PS4 homebrew game catalogue and BitTorrent download manager for HEN-enabled consoles.</strong></p>
   <p>Browse game listings, queue torrent downloads, install compatible PKG files, or keep transfers running with the optional background service.</p>
   <p>YOUR SYSTEM. YOUR RULES.</p>
   <p>
@@ -30,36 +30,34 @@ Only compatible, complete PKG files can be installed this way. Archives and spli
 
 ## Get started
 
-1. Download and install the [NULL_store PKG](../../releases/latest/download/NULL_store-PS4-1.0.pkg) with HEN active.
+1. Download and install the [NULL_store PKG](../../releases/latest/download/NULL_store-PS4-01.01.pkg) with HEN active.
 2. Open **NULL_store** from the home screen. Browse the catalogue, search with **Triangle**, or save favorites with **Square**.
 3. Open a listing and choose **Download** to add its torrent to the queue.
-4. Press **R3** to open Downloads. Pause or resume jobs, choose a destination for new downloads, or use **Triangle** on a completed job to install a compatible PKG.
+4. Press **R1** until **Downloads** is selected. Pause or resume jobs with **X**, cancel one with **Square** (it is removed and its files are deleted), or use **Triangle** on a completed job to install a compatible PKG.
+5. Press **Options** on the catalogue to open **Settings**: catalogue source, sort order, download location, Debrid service and its API key (Real-Debrid, AllDebrid, Premiumize, TorBox, Debrid-Link), official artwork and catalogue refresh.
+6. The store follows the console's language: English (the default), Brazilian Portuguese, Spanish, Turkish, French or Italian.
 
 ## Keep downloads running in the background
 
 The main app downloads while it is open. For transfers to continue after you close it:
 
-1. In NULL_store, open **Downloads**, press **L3**, and select **Start / Install service**.
-2. Confirm the service shows **Connected** in Downloads.
+1. Install the [Background Service PKG](../../releases/latest/download/NULL_store-Background-Service-1.0.pkg), open the setup app and press **X**.
+2. Return to NULL_store and confirm that Downloads shows **Connected**.
 3. Close NULL_store. The service can continue the transfer while the PS4 remains awake and HEN stays active.
-
-You can also use the [optional Background Service PKG](../../releases/latest/download/NULL_store-Background-Service-1.0.pkg) to install or start the same service. Open the separate setup app and press **X**, then return to NULL_store and check for **Connected**.
 
 The service does not download in rest mode or start automatically after a reboot. Reopen NULL_store after restarting the console.
 
-## Your sources, your library
+## PS4 game catalogue and BitTorrent downloads
 
-NULL_store ships no catalogue and no built-in sites. You add the sources you want, and the app builds a library from their public listing pages. Open **Sources** in the app (L3) and scan the QR code it shows with your phone: the page lets you add, test and remove sources. A `sources.json` file on a USB stick works too. **Options** refreshes the library.
+Open **Options → Catalog source** and scan the QR code to add your sources. You can also import [sources.json](SOURCES.md) from USB on first launch. The store caches listings from each source. Open **Settings** with **Options** and choose **Refresh catalogue** to refresh it now. Starting a download fetches the torrent from its source and contacts BitTorrent trackers to find peers. Peer availability depends on the torrent and your network, so some transfers may start slowly or find no usable peers.
 
-Each source declares its base URL, its listing page pattern, and how its game cards look. [SOURCES.md](SOURCES.md) documents the format.
+With a Debrid service and its API key set in **Settings**, the torrent is sent to that service instead: it downloads the game on its own servers (the queue shows its progress), then NULL_store downloads the files from the service over HTTPS, resuming a file where it stopped. The transfer's id at the service is kept next to the torrent, so pausing and resuming does not add the torrent again.
 
-Starting a download fetches the torrent file from that source's game page and contacts BitTorrent trackers to find peers. Peer availability depends on the torrent and your network, so some transfers may start slowly or find no usable peers. Only download content you have the right to use.
-
-Open **Downloads**, press **L3**, then choose **Test torrent connection (one piece only)** to test with the public-domain *Big Buck Bunny* torrent. It downloads one verified piece and stops at about 256 KB. [See the PS4 test guide.](TESTING.md)
+[See the PS4 test guide.](TESTING.md)
 
 ## Known limitations and test status
 
-- The same game or release may appear more than once because entries from different sources are kept separately.
+- The store groups matching listings. Titles with different names and no shared title ID can still appear separately.
 - Transfers can be slow or fail when trackers are unavailable or no compatible peers can be reached.
 - Package installation supports complete compatible `.pkg` files; it does not extract archives or join split packages.
 - The Background Service requires HEN to remain active and the console to stay awake. Rest mode and automatic startup are not supported.
@@ -80,9 +78,7 @@ Console testing has been performed on PS4 system software **13.00** with HEN act
 
 ### Do I need to install the Background Service package separately?
 
-You don't need another package to use NULL_store. The main app contains a service that can keep downloads running after the store closes. To try setting it up, go to **Downloads → L3 → Start / Install service**.
-
-The separate Background Service PKG is optional. It provides another way to install or start the same service; you don't need it if setup works directly from NULL_store. Check that Downloads shows **Connected** and keep your PS4 awake with HEN active for background transfers.
+Only for downloads that keep running after you close NULL_store. Without it, NULL_store downloads while it is open. The service is installed and started from the separate Background Service PKG; check that Downloads shows **Connected** and keep your PS4 awake with HEN active for background transfers.
 
 ## Disclaimer
 
@@ -97,5 +93,7 @@ The source code and host tests are available in this repository. See [BUILDING.m
 ## Third-party software
 
 The optional Background Service includes the unmodified `jb.prx` compatibility module from Itemzflow, licensed under GPL-3.0. The [license](https://github.com/LightningMods/Itemzflow/blob/e71c284c61db3fce53936178db30dd38be7ba47b/LICENSE), [PRX source and build files](https://github.com/LightningMods/Itemzflow/tree/e71c284c61db3fce53936178db30dd38be7ba47b/external/Jailbreak%20PRX), and [upstream module](https://github.com/LightningMods/Itemzflow/blob/e71c284c61db3fce53936178db30dd38be7ba47b/App-Media-Assets/Media/jb.prx) are available from the Itemzflow repository at the revision used for this component.
+
+The store renders with the precompiled Piglet shader binaries of the SDL2 PS4 port by cpasjuste, under the zlib license ([notice](third_party/piglet_shaders/LICENSE-SDL.txt)), and uses the public-domain [stb](third_party/stb/LICENSE) libraries for images and fonts. WebP artwork is decoded with [libwebp](third_party/libwebp/README.nullstore.txt) 1.4.0, under its [BSD license](third_party/libwebp/COPYING). Letters the store's ABeeZee font lacks (Turkish ğ, ş, İ) come from the Inter font, under the SIL Open Font License ([license](assets/LICENSE-font-fallback.txt)).
 
 [Download checksums](SHA256SUMS.txt)

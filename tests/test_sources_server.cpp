@@ -52,7 +52,7 @@ int main() {
     char dir[] = "build/tmp/sources-server-XXXXXX";
     assert(mkdtemp(dir));
     std::string root = dir;
-    sourceTable().items.clear();
+    replaceSources({});
 
     SourcesServer server(root, stubFetch);
     std::string error;
@@ -74,7 +74,7 @@ int main() {
     std::string entry = "{\"label\":\"Example\",\"base\":\"https://games.example.org\",\"listing\":\"/games/\",\"item\":\"article.card\",\"title\":\".card-title\"}";
     Reply added = call(port, "POST", "/api/add?c=" + code, entry);
     assert(added.status == 200 && added.body.find("\"ok\":true") != std::string::npos);
-    assert(sourceTable().items.size() == 1);
+    assert(sourceSnapshot()->items.size() == 1);
     assert(readFile(root + "/sources.json").find("games.example.org") != std::string::npos);
 
     Reply tested = call(port, "POST", "/api/test?c=" + code, entry);
@@ -83,14 +83,14 @@ int main() {
 
     Reply badEntry = call(port, "POST", "/api/add?c=" + code, "{\"label\":\"Bad\",\"base\":\"http://insecure.test\",\"item\":\".card\"}");
     assert(badEntry.status == 200 && badEntry.body.find("\"ok\":false") != std::string::npos);
-    assert(sourceTable().items.size() == 1);
+    assert(sourceSnapshot()->items.size() == 1);
 
     Reply broken = call(port, "POST", "/api/save?c=" + code, "{");
     assert(broken.status == 200 && broken.body.find("\"ok\":false") != std::string::npos);
 
     Reply saved = call(port, "POST", "/api/save?c=" + code, "{\"version\":1,\"sources\":[]}");
     assert(saved.status == 200 && saved.body.find("\"ok\":true") != std::string::npos);
-    assert(sourceTable().items.empty());
+    assert(sourceSnapshot()->items.empty());
 
     Reply badCode = call(port, "GET", "/api/sources?c=000000");
     assert(badCode.status == 403);

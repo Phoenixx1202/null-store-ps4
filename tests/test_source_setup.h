@@ -18,5 +18,7 @@ inline void registerTestSource(const std::string& id, const std::string& base) {
     source.shape.linkClasses.push_back("download_button_like_stat");
     source.shape.linkMarkers.push_back("do=download");
     source.shape.linkMarkers.push_back(".torrent");
-    sourceTable().items.push_back(source);
+    auto table = *sourceSnapshot();
+    table.items.push_back(source);
+    replaceSources(table);
 }

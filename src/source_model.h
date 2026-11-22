@@ -7,6 +7,8 @@
 // contains no per-site parsers; the shape below is the whole vocabulary.
 #include <string>
 #include <vector>
+#include <memory>
+#include <mutex>
 #include <cstdlib>
 #include <cctype>
 
@@ -52,9 +54,24 @@ public:
     bool empty() const { return items.empty(); }
 };
 
-inline SourceTable& sourceTable() {
-    static SourceTable table;
-    return table;
+struct SourceRegistry {
+    std::mutex mutex;
+    std::shared_ptr<const SourceTable> current = std::make_shared<SourceTable>();
+};
+inline SourceRegistry& sourceRegistry() {
+    static SourceRegistry registry;
+    return registry;
+}
+inline std::shared_ptr<const SourceTable> sourceSnapshot() {
+    auto& registry = sourceRegistry();
+    std::lock_guard<std::mutex> lock(registry.mutex);
+    return registry.current;
+}
+inline void replaceSources(const SourceTable& next) {
+    auto copy = std::make_shared<SourceTable>(next);
+    auto& registry = sourceRegistry();
+    std::lock_guard<std::mutex> lock(registry.mutex);
+    registry.current = std::move(copy);
 }
 
 inline std::string urlHost(const std::string& url) {
@@ -174,7 +191,7 @@ inline bool SourceTable::owns(int index, const std::string& url) const {
 }
 
 // Compatibility shims used across the app and the service.
-inline int sourceForURL(const std::string& url) { return sourceTable().indexForURL(url); }
+inline int sourceForURL(const std::string& url) { return sourceSnapshot()->indexForURL(url); }
 inline bool sourceURL(const std::string& url) { return sourceForURL(url) != 0; }
-inline std::string sourceOrigin(int source) { return sourceTable().origin(source); }
-inline std::string sourceName(int source) { return sourceTable().label(source); }
+inline std::string sourceOrigin(int source) { return sourceSnapshot()->origin(source); }
+inline std::string sourceName(int source) { return source ? sourceSnapshot()->label(source) : "All sources"; }

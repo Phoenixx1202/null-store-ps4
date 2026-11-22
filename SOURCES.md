@@ -5,10 +5,10 @@ refreshed from those sites' public listing pages.
 
 ## Installing a source list
 
-**From your phone (easiest).** Open **Sources** in the app (L3). The screen shows a QR code
+**From your phone (easiest).** Open **Options → Catalog source**. The screen shows a QR code
 and an address like `http://192.168.1.40:8090/418302`. Scan the code with your phone
 camera on the same Wi-Fi, or type the address. Fill in the form, press **Test** to check
-the page parses, then **Add source**. Press **Options** to build the library.
+the page parses, then **Add source**. Choose **Settings → Refresh catalogue** to build the library.
 
 **From a USB stick.** Create the file on a computer, put it at
 `NULL_store/sources.json` on the stick, insert it, and start NULL_store. The app copies it
@@ -81,7 +81,7 @@ descendant or pseudo selectors.
 Press **Test** on the phone page: it fetches page 1 and reports how many cards matched, so
 a wrong selector shows up as `0 games found` before you save anything.
 
-On the console, press **Options** and watch the status line. `0 updated / 0 cached / 1 failed` with an empty
+On the console, choose **Settings → Refresh catalogue** and watch the status line. `0 updated / 0 cached / 1 failed` with an empty
 library means the page was fetched but no card matched `shape.item`, or the URL was not
 `https://` on that host. A working source reports `1 updated` and fills the grid.
 

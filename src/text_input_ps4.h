@@ -9,6 +9,7 @@ public:
     enum Result {Pending,Accepted,Cancelled,Failed};
     ~NativeTextInput();
     bool isOpen()const{return opened;}
-    bool begin(int user,const std::string&initial,std::string&error);
+    // Opens the console's keyboard; `search` labels its button Search, else OK.
+    bool begin(int user,const std::string&initial,std::string&error,const char16_t*title=u"Search games",const char16_t*placeholder=u"Game title",bool search=true);
     Result poll(std::string&text,std::string&error);
 };

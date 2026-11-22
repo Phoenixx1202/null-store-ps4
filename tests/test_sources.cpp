@@ -15,7 +15,7 @@ int main() {
     expectOne(table.items[0].id == "example", "slug kept");
     expectOne(table.items[0].shape.imageAttributes.size() == 2, "image attribute defaults kept");
     expectOne(table.items[0].shape.blocked.size() == 1, "blocked rule parsed");
-    sourceTable() = table;
+    replaceSources(table);
 
     expectOne(sourceForURL("https://games.example.org/games/1.html") == 1, "own host recognised");
     expectOne(sourceForURL("https://www.games.example.org/games/1.html") == 1, "www host recognised");
@@ -28,9 +28,9 @@ int main() {
     expectOne(table.listingURL(1, 3) == "https://games.example.org/games/page/3/", "later page listing");
     Source single = table.items[0];
     single.pageListing.clear();
-    sourceTable().items[0] = single;
-    expectOne(sourceTable().listingURL(1, 2).empty(), "no page template means no later pages");
-    sourceTable() = table;
+    auto singleSource = table; singleSource.items[0] = single; replaceSources(singleSource);
+    expectOne(sourceSnapshot()->listingURL(1, 2).empty(), "no page template means no later pages");
+    replaceSources(table);
 
     expectOne(table.resolve(1, "/art/1.jpg") == "https://games.example.org/art/1.jpg", "absolute path resolved");
     expectOne(table.resolve(1, "//cdn.example.org/a.jpg") == "https://cdn.example.org/a.jpg", "protocol-relative resolved");
@@ -77,7 +77,7 @@ int main() {
     expectOne(parsed.list("a") && parsed.list("a")->items.size() == 3, "json array parsed");
     expectOne(parsed.list("a")->items[2].text == "x\xc3\xa9\n", "json unicode and escape decoded");
 
-    sourceTable().items.clear();
+    replaceSources({});
     expectOne(parseListing(readFile("tests/fixtures/store-listing.html"), 1).empty(), "no sources means no games");
     std::cout << "Source model, generic listing, download detection, JSON round trip and rejection paths passed.\n";
 }

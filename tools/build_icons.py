@@ -6,7 +6,10 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 ROOT = Path(__file__).resolve().parents[1]
 BRAND = ROOT / "assets" / "brand"
 SOURCE = BRAND / "nullstore-bag.png"
-FONT = Path("/System/Library/Fonts/Supplemental/Verdana Bold.ttf")
+# Verdana Bold where the system has it (macOS, Windows), DejaVu Sans Bold on Linux.
+FONTS = (Path("/System/Library/Fonts/Supplemental/Verdana Bold.ttf"), Path("C:/Windows/Fonts/verdanab.ttf"),
+         Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"))
+FONT = next((path for path in FONTS if path.exists()), FONTS[0])
 
 
 def icon(label: str, target: Path) -> None:

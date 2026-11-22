@@ -3,8 +3,12 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#ifdef __ORBIS__
+#include <orbis/NetCtl.h>
+#else
 #include <ifaddrs.h>
 #include <net/if.h>
+#endif
 #include <sys/select.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -101,8 +105,14 @@ const api=(path,body)=>{
 function render(list){
   const box=document.getElementById('list');
   if(!list.length){box.innerHTML='<em>No sources yet.</em>';return}
-  box.innerHTML=list.map((s,i)=>'<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #1f4436"><span style="flex:1">'+s.label+'<br><small style="color:#84a898">'+s.base+'</small></span><button class="ghost" data-i="'+i+'">Remove</button></div>').join('');
-  box.querySelectorAll('button').forEach(b=>b.onclick=()=>api('/api/remove',JSON.stringify({index:+b.dataset.i})).then(load));
+  box.replaceChildren();
+  list.forEach((s,i)=>{
+    const row=document.createElement('p'), label=document.createElement('span'), button=document.createElement('button');
+    label.textContent=s.label+' · '+s.base+' ';
+    button.className='ghost'; button.textContent='Remove';
+    button.onclick=()=>api('/api/remove',JSON.stringify({index:i})).then(load);
+    row.append(label,button); box.append(row);
+  });
 }
 function load(){
   api('/api/sources').then(d=>{
@@ -173,6 +183,11 @@ std::string entryToSourceJSON(const std::string& body) {
 }
 
 static std::string localLanAddressImpl() {
+#ifdef __ORBIS__
+    OrbisNetCtlInfo info{};
+    if (sceNetCtlGetInfo(ORBIS_NET_CTL_INFO_IP_ADDRESS, &info) != 0) return {};
+    return info.ip_address;
+#else
     ifaddrs* list = 0;
     if (getifaddrs(&list) != 0) return "";
     std::string found;
@@ -189,6 +204,7 @@ static std::string localLanAddressImpl() {
     }
     freeifaddrs(list);
     return found;
+#endif
 }
 
 } // namespace
@@ -346,13 +362,13 @@ void SourcesServer::handle(int client) {
     if (method == "GET" && (path == "/" || path == "/index.html" || path == "/" + sessionCode)) {
         reply = httpResponse("200 OK", "text/html; charset=utf-8", setupPage(sessionCode));
     } else if (method == "GET" && path == "/api/sources") {
-        std::string dump = sourcesToJSON(sourceTable());
+        std::string dump = sourcesToJSON(*sourceSnapshot());
         size_t openBracket = dump.find('[');
         size_t closeBracket = dump.rfind(']');
         std::string array = openBracket == std::string::npos || closeBracket == std::string::npos ? "[]" : dump.substr(openBracket, closeBracket - openBracket + 1);
         reply = httpResponse("200 OK", "application/json", "{\"ok\":true,\"code\":" + jsonEscape(sessionCode) + ",\"sources\":" + array + "}");
     } else if (method == "POST" && path == "/api/add") {
-        SourceTable current = sourceTable();
+        SourceTable current = *sourceSnapshot();
         SourceTable parsed;
         std::string error;
         std::string wrapped = "{\"sources\":[" + entryToSourceJSON(body) + "]}";
@@ -367,7 +383,7 @@ void SourcesServer::handle(int client) {
             if (!saveSources(path_, current, error)) {
                 reply = httpResponse("200 OK", "application/json", "{\"ok\":false,\"error\":" + jsonEscape(error) + "}");
             } else {
-                parseSourcesJSON(sourcesToJSON(current), sourceTable(), error);
+                replaceSources(current);
                 reply = httpResponse("200 OK", "application/json", "{\"ok\":true}");
             }
         }
@@ -375,7 +391,7 @@ void SourcesServer::handle(int client) {
         int index = -1;
         JValue request_; 
         if (jsonParse(body, request_)) index = request_.integer("index", -1);
-        SourceTable current = sourceTable();
+        SourceTable current = *sourceSnapshot();
         std::string error;
         if (index < 0 || index >= (int)current.items.size()) {
             reply = httpResponse("200 OK", "application/json", "{\"ok\":false,\"error\":\"no such source\"}");
@@ -384,7 +400,7 @@ void SourcesServer::handle(int client) {
             if (!saveSources(root + "/sources.json", current, error)) {
                 reply = httpResponse("200 OK", "application/json", "{\"ok\":false,\"error\":" + jsonEscape(error) + "}");
             } else {
-                sourceTable() = current;
+                replaceSources(current);
                 reply = httpResponse("200 OK", "application/json", "{\"ok\":true}");
             }
         }
@@ -396,7 +412,7 @@ void SourcesServer::handle(int client) {
         } else if (!saveSources(root + "/sources.json", parsed, error)) {
             reply = httpResponse("200 OK", "application/json", "{\"ok\":false,\"error\":" + jsonEscape(error) + "}");
         } else {
-            sourceTable() = parsed;
+            replaceSources(parsed);
             reply = httpResponse("200 OK", "application/json", "{\"ok\":true}");
         }
     } else if (method == "POST" && path == "/api/test") {

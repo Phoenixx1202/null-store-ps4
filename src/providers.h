@@ -8,7 +8,8 @@
 // Per-source cache files. Named after the source slug so that reordering or
 // renaming other sources never strands a user's cached library.
 inline std::string providerSlug(int source) {
-    const Source* item = sourceTable().at(source);
+    const auto sources = sourceSnapshot();
+    const Source* item = sources->at(source);
     std::string slug = item ? sourceSlug(item->id) : "";
     if (slug.empty()) slug = "source-" + std::to_string(source);
     return slug;
@@ -48,7 +49,7 @@ inline std::vector<Game> mergedCatalog(const std::string& cacheRoot) {
     auto root = slash == std::string::npos ? std::string(".") : cacheRoot.substr(0, slash);
     auto legacy = loadCatalog(loadQueue(cacheRoot));
     std::vector<Game> out;
-    for (int source = 1; source <= (int)sourceTable().items.size(); ++source) {
+    for (int source = 1; source <= (int)sourceSnapshot()->items.size(); ++source) {
         auto part = providerCached(root, source);
         if (part.empty()) for (auto& g : legacy) if (sourceForURL(g.url) == source) part.push_back(g);
         out.insert(out.end(), part.begin(), part.end());

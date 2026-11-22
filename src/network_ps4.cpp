@@ -2,6 +2,9 @@
 #include "data_root.h"
 #include "catalog.h"
 #include "service_log.h"
+#if !defined(PORTAL_HOST)
+#include "network_bypass.h"
+#endif
 #include <pthread.h>
 #include <orbis/Http.h>
 #include <orbis/Ssl.h>
@@ -56,6 +59,16 @@ static std::string redirectURL(const std::string&base,std::string path){while(!p
 bool portalNetworkFetch(const std::string&initial,std::string&out,size_t cap,const std::string&referer){
  out.clear();
  if(!portalNetworkInit()){portalNetworkTrace("GET failed host=%s reason=network_init",networkHost(initial).c_str());return false;}
+#if !defined(PORTAL_HOST)
+ // Every download goes over the application's own sockets: an interrupted
+ // libSceHttp request (a connect or receive timeout) ends a gde title, and
+ // slow or blocked servers make those routine (src/network_bypass.cpp).
+ {
+  std::string ref=referer;
+  if(sourceURL(initial))ref=sourceForURL(referer)==sourceForURL(initial)?referer:sourceOrigin(sourceForURL(initial))+"/";
+  return portalSocketFetch(initial,out,cap,ref);
+ }
+#endif
  std::string url=initial;
  for(int hop=0;hop<6;hop++){
   if(!networkURL(url)){portalNetworkTrace("GET failed host=%s hop=%d reason=invalid_url",networkHost(url).c_str(),hop);return false;}

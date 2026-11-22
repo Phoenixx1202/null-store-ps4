@@ -23,7 +23,7 @@ static std::vector<Game> makeGames(const std::string& base, int count, int offse
 }
 
 int main() {
-    sourceTable().items.clear();
+    replaceSources({});
     registerTestSource("one", "https://example.org");
     registerTestSource("two", "https://games2.example.org");
 
@@ -56,7 +56,7 @@ int main() {
     expectOne(providerCachePath(root, 1).find("catalog-source-one") != std::string::npos, "cache file is named after the source slug");
     expectOne(providerCoverPath(root, 2).find("covers/source-two") != std::string::npos, "cover folder is named after the source slug");
 
-    sourceTable().items.clear();
+    replaceSources({});
     expectOne(mergedCatalog(root + "/catalog.tsv").empty(), "no sources means an empty library");
     expectOne(providerCached(root, 1).empty(), "no sources means no cached rows");
     std::cout << "Per-source cache isolation, expiry, clock rollback, checksum recovery and merged library passed.\n";

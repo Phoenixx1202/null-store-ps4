@@ -11,7 +11,11 @@
 struct Game { int id=0; std::string title,year,size,url,image; };
 struct TorrentLink {std::string title,url;};
 inline std::string readFile(const std::string&p) { FILE*f=fopen(p.c_str(),"rb"); if(!f)return ""; std::string s; char b[8192]; size_t n; while((n=fread(b,1,sizeof b,f)))s.append(b,n); fclose(f); return s; }
-inline bool writeFile(const std::string&p,const std::string&s) { FILE*f=fopen((p+".tmp").c_str(),"wb");if(!f)return false; bool ok=fwrite(s.data(),1,s.size(),f)==s.size(); if(fclose(f))ok=false; if(ok)ok=rename((p+".tmp").c_str(),p.c_str())==0;return ok; }
+inline bool writeFile(const std::string&p,const std::string&s) { FILE*f=fopen((p+".tmp").c_str(),"wb");if(!f)return false; bool ok=fwrite(s.data(),1,s.size(),f)==s.size(); if(fclose(f))ok=false; 
+#ifdef _WIN32
+    if(ok)remove(p.c_str()); // Windows does not rename over an existing file (host tests only)
+#endif
+    if(ok)ok=rename((p+".tmp").c_str(),p.c_str())==0;return ok; }
 inline std::string utf8(unsigned c) {std::string o;if(c<128)o+=char(c);else if(c<2048){o+=char(192|(c>>6));o+=char(128|(c&63));}else if(c<65536){o+=char(224|(c>>12));o+=char(128|((c>>6)&63));o+=char(128|(c&63));}else if(c<=0x10ffff){o+=char(240|(c>>18));o+=char(128|((c>>12)&63));o+=char(128|((c>>6)&63));o+=char(128|(c&63));}return o;}
 inline std::string decode(std::string s) {
     size_t p=0; while((p=s.find('&',p))!=std::string::npos){auto e=s.find(';',p);if(e==std::string::npos||e-p>12){++p;continue;}auto k=s.substr(p+1,e-p-1);std::string r;

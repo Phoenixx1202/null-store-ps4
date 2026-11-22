@@ -62,7 +62,7 @@ extern "C" int32_t sceHttpGetAllResponseHeaders(int32_t,char**,size_t*){return -
 extern "C" int32_t sceHttpReadData(int32_t,void* data,uint32_t){if(bodySent)return 0;checkRoots();memcpy(data,"page",4);bodySent=true;return 4;}
 static void resetNetwork(){if(http>=0)sceHttpTerm(http);if(ssl>=0)sslTerminate(ssl);if(pool>=0)sceNetPoolDestroy(pool);http=ssl=pool=-1;}
 int main(){
- sourceTable().items.clear();registerTestSource("one","https://example.org");registerTestSource("two","https://games2.example.org");registerTestSource("three","https://games3.example.org");
+ replaceSources({});registerTestSource("one","https://example.org");registerTestSource("two","https://games2.example.org");registerTestSource("three","https://games3.example.org");
  std::string page;
  assert(portalNetworkFetch("https://example.org/test/",page,1024,"https://example.org/")&&page=="page");
  assert(keepalive&&loadCalls==1);auto** retained=loadedRoots;

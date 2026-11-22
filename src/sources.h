@@ -100,7 +100,7 @@ inline bool blockedLink(const std::string& tag, const SourceShape& shape) {
     return false;
 }
 
-inline std::string firstImage(const std::string& block, const SourceShape& shape, int source) {
+inline std::string firstImage(const SourceTable& table, const std::string& block, const SourceShape& shape, int source) {
     std::string attributes = "";
     size_t p = 0;
     while ((p = block.find("<img", p)) != std::string::npos) {
@@ -110,8 +110,8 @@ inline std::string firstImage(const std::string& block, const SourceShape& shape
         for (size_t i = 0; i < shape.imageAttributes.size(); ++i) {
             std::string value = attr(tag, shape.imageAttributes[i]);
             if (value.empty()) continue;
-            std::string full = sourceTable().resolve(source, value);
-            if (full.empty() || !sourceTable().owns(source, full)) continue;
+            std::string full = table.resolve(source, value);
+            if (full.empty() || !table.owns(source, full)) continue;
             if (lower(full).find(".svg") != std::string::npos) continue;
             return full;
         }
@@ -152,7 +152,7 @@ inline std::vector<Game> parseListingWith(const SourceTable& table, const std::s
             game.title = plain(block.substr(ae + 1, textEnd == std::string::npos ? 0 : textEnd - ae - 1));
         }
         if (game.title.empty()) game.title = attr(anchor, "title");
-        game.image = firstImage(block, source_->shape, source);
+        game.image = firstImage(table, block, source_->shape, source);
         game.size = elementText(block, source_->shape.size);
         if (game.title.empty()) continue;
         games.push_back(game);
@@ -160,11 +160,13 @@ inline std::vector<Game> parseListingWith(const SourceTable& table, const std::s
     return games;
 }
 
-inline std::vector<Game> parseListing(const std::string& html, int source) { return parseListingWith(sourceTable(), html, source); }
+inline std::vector<Game> parseListing(const std::string& html, int source) { return parseListingWith(*sourceSnapshot(), html, source); }
 
 inline std::vector<TorrentLink> parseDownloadLinks(const std::string& html, int source) {
     std::vector<TorrentLink> links;
-    const Source* source_ = sourceTable().at(source);
+    const auto sources = sourceSnapshot();
+    const auto& table = *sources;
+    const Source* source_ = table.at(source);
     if (!source_ || html.empty()) return links;
     std::set<std::string> seen;
     size_t p = 0;
@@ -175,8 +177,8 @@ inline std::vector<TorrentLink> parseDownloadLinks(const std::string& html, int 
         std::string tag = html.substr(p, close - p + 1);
         p = close + 1;
         if (tag.size() > 2 && tag[1] == 'a' && (isspace((unsigned char)tag[2]) || tag[2] == '>')) {
-            std::string url = sourceTable().resolve(source, attr(tag, "href"));
-            if (!sourceTable().owns(source, url) || blockedLink(tag, source_->shape)) continue;
+            std::string url = table.resolve(source, attr(tag, "href"));
+            if (!table.owns(source, url) || blockedLink(tag, source_->shape)) continue;
             bool download = false;
             for (size_t i = 0; i < source_->shape.linkClasses.size() && !download; ++i)
                 download = hasClass(tag, source_->shape.linkClasses[i]);
@@ -321,12 +323,12 @@ inline bool saveSources(const std::string& path, const SourceTable& table, std::
 // a fresh install simply has no sources until the user adds one.
 inline bool loadSourcesIntoTable(const std::string& path, std::string& error) {
     if (readFile(path).empty()) {
-        sourceTable().items.clear();
+        replaceSources({});
         error.clear();
         return true;
     }
     SourceTable loaded;
     if (!loadSources(path, loaded, error)) return false;
-    sourceTable() = loaded;
+    replaceSources(loaded);
     return true;
 }
