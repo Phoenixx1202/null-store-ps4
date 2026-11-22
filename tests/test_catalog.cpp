@@ -5,6 +5,7 @@ using namespace ns;
 #include <iostream>
 #include <sys/stat.h>
 int main(){
+    replaceSources({});
     registerTestSource("one", "https://one.example.org");
     registerTestSource("two", "https://two.example.org");
     std::vector<Game> games;
@@ -51,6 +52,11 @@ int main(){
     ui.action(CONFIRM);assert(ui.detail);ui.action(SETTINGS);assert(!ui.settings);ui.action(CONFIRM);assert(ui.sourcePicker&&ui.downloadRequest&&ui.downloadGame.id==ui.current()->id);ui.action(BACK);assert(!ui.sourcePicker&&ui.detail);ui.action(BACK);assert(!ui.detail);
     // Download queue: Settings stays closed, only finished downloads install, Square cancels and deletes.
     ui.action(TAB_PREV);assert(ui.tab==TAB_DOWNLOADS);ui.action(SETTINGS);assert(!ui.settings);ui.action(SEARCH);assert(!ui.installPicker);
+    ui.action(MANAGE);for(int i=0;i<4;i++)ui.action(DOWN);ui.action(CONFIRM);
+    assert(ui.confirmWorkerRemoval && !ui.uninstallWorker && ui.menuChoice==0);
+    ui.action(CONFIRM);assert(ui.workerMenu && !ui.uninstallWorker);
+    ui.action(CONFIRM);ui.action(DOWN);ui.action(CONFIRM);
+    assert(ui.uninstallWorker && !ui.confirmWorkerRemoval);ui.uninstallWorker=false;
     DownloadRow running;running.id=2;running.state=DownloadState::Active;ui.jobs.push_back(running);ui.action(SEARCH);assert(!ui.installPicker);ui.jobs.clear();
     DownloadRow completed;completed.id=1;completed.state=DownloadState::Complete;ui.jobs.push_back(completed);ui.action(SEARCH);assert(ui.installPicker&&ui.installScanRequest&&ui.installJob==1);InstallPackage package;package.path="/generated/base.pkg";ui.packages.push_back(package);ui.installLoading=false;ui.action(CONFIRM);assert(ui.installSubmitRequest);ui.action(BACK);assert(!ui.installPicker);
     ui.action(FAVORITE);ui.menuChoice=1;ui.action(CONFIRM);assert(ui.cancelRequest&&ui.cancelJob==1&&ui.jobs.empty()&&ui.deletingJobs.count(1));ui.cancelRequest=false;

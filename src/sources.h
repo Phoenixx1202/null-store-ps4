@@ -1,6 +1,5 @@
 #pragma once
-// sources.json loading, saving and the generic HTML extraction that replaces the
-// per-site parsers. A source is data here, never code.
+// Built-in adapters and user-defined selectors share URL and link validation.
 #include "catalog.h"
 #include "source_model.h"
 #include "json_min.h"
@@ -54,8 +53,22 @@ inline std::string tagNameOf(const std::string& tag) {
 
 inline size_t elementEndFor(const std::string& html, const std::string& tagName, size_t from) {
     if (tagName.empty()) return from;
-    size_t at = html.find("</" + tagName, from);
-    return at == std::string::npos ? html.size() : at;
+    int depth = 1;
+    for (size_t at = from; (at = html.find('<', at)) != std::string::npos; ++at) {
+        const bool closing = at + 1 < html.size() && html[at + 1] == '/';
+        const size_t name = at + (closing ? 2 : 1), end = name + tagName.size();
+        if (end >= html.size() || html.compare(name, tagName.size(), tagName) != 0) continue;
+        if (html[end] != '>' && html[end] != '/' && !isspace((unsigned char)html[end])) continue;
+        if (closing) {
+            if (--depth == 0) return at;
+        } else {
+            const auto close = html.find('>', end);
+            if (close == std::string::npos) break;
+            if (html[close - 1] != '/') ++depth;
+            at = close;
+        }
+    }
+    return html.size();
 }
 
 inline size_t elementEnd(const std::string& html, const std::string& selector, size_t from) {
@@ -109,7 +122,7 @@ inline std::string firstImage(const SourceTable& table, const std::string& block
         std::string tag = block.substr(p, close - p + 1);
         for (size_t i = 0; i < shape.imageAttributes.size(); ++i) {
             std::string value = attr(tag, shape.imageAttributes[i]);
-            if (value.empty()) continue;
+            if (value.empty() || value.compare(0,5,"data:") == 0) continue;
             std::string full = table.resolve(source, value);
             if (full.empty() || !table.owns(source, full)) continue;
             if (lower(full).find(".svg") != std::string::npos) continue;
@@ -123,10 +136,93 @@ inline std::string firstImage(const SourceTable& table, const std::string& block
 // A game id is derived from its page URL so it survives restarts and reordering.
 inline int gameIdFromURL(const std::string& url) { return stableGameId(url); }
 
+inline int listingNumber(const std::string& text, size_t start) {
+    if (start >= text.size() || !isdigit((unsigned char)text[start])) return 0;
+    long n = strtol(text.c_str() + start, nullptr, 10);
+    return n > 0 && n < 500000000 ? static_cast<int>(n) : 0;
+}
+
+inline int builtInLastPage(const std::string& html, SourceKind kind) {
+    const bool love = kind == SourceKind::LoveGames;
+    const std::string prefix = love ? "/42-" : "/page/";
+    int last = 1;
+    for (size_t at = 0; (at = html.find(prefix, at)) != std::string::npos;) {
+        at += prefix.size();
+        const int page = listingNumber(html, at);
+        const auto end = html.find_first_not_of("0123456789", at);
+        if (page > last && page <= 500 && (!love || end == std::string::npos || html[end] != '-'))
+            last = page;
+    }
+    return last;
+}
+
+inline std::vector<Game> parseBuiltInListing(const SourceTable& table, const std::string& html, int index) {
+    const auto& source = *table.at(index);
+    const bool ps4 = source.kind == SourceKind::PS4Torrent;
+    const bool love = source.kind == SourceKind::LoveGames;
+    const char* selector = ps4 ? "a.item" : love ? "div" : "article.shortstory-item";
+    std::vector<Game> games;
+    size_t cursor = 0, open = 0, close = 0;
+    while (findElement(html, selector, cursor, open, close)) {
+        cursor = close + 1;
+        const auto tag = html.substr(open, cursor - open);
+        const auto entryId = love ? attr(tag, "id") : std::string();
+        if (love && entryId.compare(0, 7, "entryID") != 0) continue;
+        // The Love Games template nests many divs and omits some closing tags.
+        const auto end = love ? html.find("id=\"entryID", cursor) :
+                                html.find(ps4 ? "</a>" : "</article>", cursor);
+        const auto block = html.substr(cursor, end - cursor);
+        if (love && end != std::string::npos) {
+            auto next = html.rfind('<', end);
+            cursor = next >= cursor && next != std::string::npos ? next : end;
+        } else {
+            cursor = end == std::string::npos ? html.size() : end + 1;
+        }
+        size_t anchor = 0, anchorEnd = 0;
+        if (!ps4 && !findElement(block, "a", 0, anchor, anchorEnd)) continue;
+        const auto href = attr(ps4 ? tag : block.substr(anchor, anchorEnd - anchor + 1), "href");
+        if (href.empty()) continue;
+        Game game;
+        game.url = table.resolve(index, href);
+        if (!table.owns(index, game.url)) continue;
+        const auto path = game.url.substr(urlOrigin(game.url).size());
+        if (path.empty() || path[0] != '/') continue;
+        if (!ps4 && !love && path.compare(0, source.listing.size(), source.listing) != 0) continue;
+        if (love && (path.find("/igry_dlja_playstation_4/") == std::string::npos ||
+                     path.find("/gde_eshhe_zagruzit_igry/") != std::string::npos)) continue;
+        const int number = love ? listingNumber(entryId, 7) : listingNumber(path, path.find_last_of('/') + 1);
+        if (!number) continue;
+        game.id = (ps4 ? 0 : love ? 1500000000 : 1000000000) + number;
+        game.title = elementText(block, ps4 ? ".item__title" : love ? ".titl" : ".title");
+        if (game.title.empty()) continue;
+        game.image = firstImage(table, block, source.shape, index);
+        if (ps4) {
+            size_t begin = 0, finish = 0;
+            if (findElement(block, "span", 0, begin, finish)) {
+                game.year = elementText(block, "span", begin);
+                game.size = elementText(block, "span", finish + 1);
+            }
+        } else if (love) {
+            const std::string marker = "Размер:";
+            auto at = block.find(marker);
+            if (at != std::string::npos) {
+                at += marker.size();
+                game.size = plain(block.substr(at, block.find("</p>", at) - at));
+            }
+        } else {
+            game.year = elementText(block, ".year").substr(0, 4);
+        }
+        games.push_back(std::move(game));
+    }
+    return games;
+}
+
 inline std::vector<Game> parseListingWith(const SourceTable& table, const std::string& html, int source) {
     std::vector<Game> games;
     const Source* source_ = table.at(source);
-    if (!source_ || html.empty() || source_->shape.item.empty()) return games;
+    if (!source_ || !source_->enabled || html.empty()) return games;
+    if (source_->kind != SourceKind::Custom) return parseBuiltInListing(table, html, source);
+    if (source_->shape.item.empty()) return games;
     size_t p = 0;
     while ((p = html.find('<', p)) != std::string::npos) {
         size_t close = html.find('>', p);
@@ -136,11 +232,10 @@ inline std::vector<Game> parseListingWith(const SourceTable& table, const std::s
         size_t end = elementEndFor(html, tagNameOf(tag), close + 1);
         std::string block = html.substr(close + 1, end > close + 1 ? end - close - 1 : 0);
         p = end > close + 1 ? end : close + 1;
-        size_t a = block.find("<a");
-        if (a == std::string::npos) continue;
-        size_t ae = block.find('>', a);
-        if (ae == std::string::npos) continue;
-        std::string anchor = block.substr(a, ae - a + 1);
+        const bool anchorCard = tagNameOf(tag) == "a";
+        size_t a = 0, ae = 0;
+        if (!anchorCard && !findElement(block, "a", 0, a, ae)) continue;
+        const std::string anchor = anchorCard ? tag : block.substr(a, ae - a + 1);
         Game game;
         game.url = table.resolve(source, attr(anchor, "href"));
         if (!table.owns(source, game.url)) continue;
@@ -149,7 +244,7 @@ inline std::vector<Game> parseListingWith(const SourceTable& table, const std::s
         game.title = elementText(block, source_->shape.title);
         if (game.title.empty()) {
             size_t textEnd = block.find("</a>", ae + 1);
-            game.title = plain(block.substr(ae + 1, textEnd == std::string::npos ? 0 : textEnd - ae - 1));
+            game.title = anchorCard ? plain(block) : plain(block.substr(ae + 1, textEnd == std::string::npos ? 0 : textEnd - ae - 1));
         }
         if (game.title.empty()) game.title = attr(anchor, "title");
         game.image = firstImage(table, block, source_->shape, source);
@@ -165,7 +260,7 @@ inline std::vector<Game> parseListing(const std::string& html, int source) { ret
 inline std::vector<TorrentLink> parseDownloadLinksWith(const SourceTable& table, const std::string& html, int source) {
     std::vector<TorrentLink> links;
     const Source* source_ = table.at(source);
-    if (!source_ || html.empty()) return links;
+    if (!source_ || !source_->enabled || html.empty()) return links;
     std::set<std::string> seen;
     size_t p = 0;
     std::string title;
@@ -174,6 +269,8 @@ inline std::vector<TorrentLink> parseDownloadLinksWith(const SourceTable& table,
         if (close == std::string::npos) break;
         std::string tag = html.substr(p, close - p + 1);
         p = close + 1;
+        if (source_->kind != SourceKind::Custom && hasClass(tag, "dl__title"))
+            title = plain(html.substr(p, html.find("</", p) - p));
         if (tag.size() > 2 && tag[1] == 'a' && (isspace((unsigned char)tag[2]) || tag[2] == '>')) {
             std::string url = table.resolve(source, attr(tag, "href"));
             if (!table.owns(source, url) || blockedLink(tag, source_->shape)) continue;
@@ -187,7 +284,7 @@ inline std::vector<TorrentLink> parseDownloadLinksWith(const SourceTable& table,
             if (source_->shape.linkMarkers.empty() && source_->shape.linkClasses.empty()) continue;
             if (!seen.insert(url).second) continue;
             size_t textEnd = html.find("</a>", close + 1);
-            std::string label = plain(html.substr(close + 1, textEnd == std::string::npos ? 0 : textEnd - close - 1));
+            std::string label = title.empty() ? plain(html.substr(close + 1, textEnd == std::string::npos ? 0 : textEnd - close - 1)) : title;
             if (label.empty()) label = attr(tag, "title");
             if (label.empty()) label = "Torrent " + std::to_string(links.size() + 1);
             links.push_back(TorrentLink{label, url});
@@ -321,16 +418,48 @@ inline bool saveSources(const std::string& path, const SourceTable& table, std::
     return true;
 }
 
-// Loads sources.json into the process-wide table. Missing file is not an error:
-// a fresh install simply has no sources until the user adds one.
-inline bool loadSourcesIntoTable(const std::string& path, std::string& error) {
-    if (readFile(path).empty()) {
-        replaceSources({});
-        error.clear();
-        return true;
+inline SourceTable additionalSources(const SourceTable& table) {
+    SourceTable additional;
+    for (const auto& source : table.items)
+        if (source.kind == SourceKind::Custom) additional.items.push_back(source);
+    return additional;
+}
+
+inline bool appendAdditional(SourceTable& table, Source source, std::string& error, bool migrating = false) {
+    for (const auto& existing : table.items) {
+        if (sameHost(urlHost(existing.base), urlHost(source.base))) {
+            error = existing.kind == SourceKind::Custom ? "This site is already in your sources."
+                                                       : "This site is already included in NULL_store.";
+            return false;
+        }
     }
-    SourceTable loaded;
-    if (!loadSources(path, loaded, error)) return false;
-    replaceSources(loaded);
+    if (table.indexForId(source.id)) {
+        if (!migrating) { error = "This source ID is already used. Choose a different name or ID."; return false; }
+        const auto prefix = source.id.substr(0, 24);
+        for (unsigned suffix = 2; table.indexForId(source.id); ++suffix)
+            source.id = prefix + "-" + std::to_string(suffix);
+    }
+    table.items.push_back(source);
+    return true;
+}
+
+inline bool installAdditionalSources(const std::string& path, const SourceTable& additional, std::string& error) {
+    SourceTable effective = builtInSources();
+    for (const auto& source : additional.items)
+        if (!appendAdditional(effective, source, error)) return false;
+    if (!saveSources(path, additional, error)) return false;
+    replaceSources(effective);
+    return true;
+}
+
+inline bool loadSourcesIntoTable(const std::string& path, std::string& error) {
+    const auto text = readFile(path);
+    SourceTable additional;
+    if (!text.empty() && !parseSourcesJSON(text, additional, error)) return false;
+    SourceTable effective = builtInSources();
+    for (const auto& source : additional.items)
+        appendAdditional(effective, source, error, true);
+    replaceSources(effective);
+    error.clear();
     return true;
 }

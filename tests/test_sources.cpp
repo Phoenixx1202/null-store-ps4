@@ -8,6 +8,24 @@ static void expectOne(bool condition, const char* message) {
 }
 
 int main() {
+    const auto& builtins = builtInSources();
+    assert(sourceSnapshot()->items.size() == 3);
+    assert(builtins.listingURL(2, 2) == "https://gametorrent.org/category/playstation-4/page/2/");
+    assert(builtins.listingURL(3, 2) == "https://love-games1.net/load/igry_dlja_konsolej/igry_dlja_playstation_4/42-2");
+    auto first = parseListingWith(builtins,
+        R"(<a class="item grid-item" href="/746-game.html"><div class="item__meta"><span>1997</span><span>458 MB</span></div><div class="item__title">Game</div></a>)", 1);
+    assert(first.size()==1 && first[0].id==746 && first[0].year=="1997" && first[0].size=="458 MB");
+    auto second = parseListingWith(builtins,
+        R"(<article class="shortstory-item"><a href="/category/playstation-4/137-game.html"><h2 class="title">Game</h2><div class="year">2026 •</div><img data-src="/cover.jpg"></a></article>)", 2);
+    assert(second.size()==1 && second[0].id==1000000137 && second[0].year=="2026" && second[0].image=="https://gametorrent.org/cover.jpg");
+    auto third = parseListingWith(builtins,
+        R"(<div id="entryID93"><div class="titl"><a href="/load/igry_dlja_konsolej/igry_dlja_playstation_4/game/42-1-0-93">Game</a></div><p>Размер: 2 GB</p></div>)", 3);
+    assert(third.size()==1 && third[0].id==1500000093 && third[0].size=="2 GB");
+    assert(builtInLastPage("/42-5 /42-1-0-94 /42-25", SourceKind::LoveGames)==25);
+    auto files = parseDownloadLinksWith(builtins,
+        R"(<b class="dl__title">Base game</b><a class="dl__btn" href="/base.torrent">Get</a><a data-gt-gated="1" href="/other.torrent">Get</a>)", 1);
+    assert(files.size()==1 && files.front().title=="Base game");
+
     SourceTable table;
     std::string error;
     expectOne(parseSourcesJSON(readFile("tests/fixtures/sources.json"), table, error), error.c_str());

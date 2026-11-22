@@ -344,6 +344,16 @@ void Application::handleRequests()
         downloadsReady_ = downloads_->start();
     }
     if (ui.startWorker) { ui.startWorker = false; downloads_->setup(); }
+    if (ui.uninstallWorker) {
+        ui.uninstallWorker = false;
+        if (!installerReady_) installerReady_ = installer_->start();
+        if (!installerReady_ || !downloadsReady_) ui.notice = "Download or installer thread unavailable. Reopen the store.";
+        else if (installer_->canRemoveWorker(ui.notice) && downloads_->stopForRemoval(ui.notice)) {
+            ui.workerRemovalBusy = true;
+            workerStopDeadline_ = sceKernelGetProcessTime() + 30000000;
+            ui.notice = "Stopping the worker and returning downloads to the store…";
+        }
+    }
     if (ui.stopWorker) { ui.stopWorker = false; downloads_->stopService(); }
     if (ui.probeTorrent) {
         ui.probeTorrent = false;
@@ -434,19 +444,42 @@ void Application::syncWorkers()
         const auto* previous = displayedSources_->at(ui.sourceFilter);
         ui.sourceFilter = previous ? table->indexForId(previous->id) : 0;
         ui.sourceChoice = ui.sourceFilter;
+        for (const auto& item : table->items) {
+            if (item.kind != SourceKind::Custom) continue;
+            const auto* old = displayedSources_->at(displayedSources_->indexForId(item.id));
+            if (!old || sourceToJSON(*old) != sourceToJSON(item)) {
+                const auto path = providerCachePath(data_, table->indexForId(item.id), *table);
+                unlink((path + ".time").c_str());
+            }
+        }
         displayedSources_ = table;
         ui.games = mergedCatalog(data_ + "/catalog.tsv");
         ui.shareTitleIds();
         ui.filter();
         sizeAttempts_.clear();
         detailAttempts_.clear();
-        refresh_->start(0, true);
+        refresh_->start(0, false, true);
     }
     const std::string connection = downloads_->connectionStatus();
     if (connection != ui.serviceStatus) {
         ui.serviceStatus = connection;
     }
     downloads_->takeNotice(ui.notice);
+    if (ui.workerRemovalBusy) {
+        std::string error;
+        if (workerStopDeadline_ && downloads_->ownsQueue()) {
+            workerStopDeadline_ = 0;
+            ui.notice = "Uninstalling download worker…";
+            installer_->removeWorker();
+        } else if (workerStopDeadline_ && sceKernelGetProcessTime() >= workerStopDeadline_) {
+            workerStopDeadline_ = 0;
+            ui.workerRemovalBusy = false;
+            ui.notice = "Could not return downloads to the store. Worker removal cancelled.";
+        } else if (installer_->takeWorkerRemoval(error)) {
+            ui.workerRemovalBusy = false;
+            ui.notice = error.empty() ? "Download worker removed. Downloads continue while the store is open." : error;
+        }
+    }
     if (installerReady_) installer_->snapshot(installVersion_, ui.packages, ui.installLoading, ui.installError);
 
     std::vector<TorrentLink> found;

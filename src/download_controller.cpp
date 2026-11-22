@@ -38,6 +38,22 @@ bool DownloadController::snapshot(uint64_t&stamp,std::vector<DownloadRow>&out){p
 bool DownloadController::takeNotice(std::string&out){pthread_mutex_lock(&mutex);bool found=!notice.empty();if(found){out=notice;notice.clear();}pthread_mutex_unlock(&mutex);return found||remote.takeNotice(out);}
 std::string DownloadController::connectionStatus(){pthread_mutex_lock(&mutex);auto status=switching?"Setting up optional background service; download progress is saved.":local?"In-app downloads | Keep NULL_store open. L3: optional background service.":!localError.empty()?localError:remote.connectionStatus();pthread_mutex_unlock(&mutex);return status;}
 void DownloadController::setup(){pthread_mutex_lock(&mutex);setupPending=true;switching=true;notice="Starting background service setup…";pthread_mutex_unlock(&mutex);}
+bool DownloadController::stopForRemoval(std::string& error) {
+    pthread_mutex_lock(&mutex);
+    const bool busy = switching || setupPending || remote.setupInProgress();
+    if (!busy) remote.stopService(true);
+    pthread_mutex_unlock(&mutex);
+    if (busy) error = "Worker startup is in progress. Retry when it finishes.";
+    return !busy;
+}
+
+bool DownloadController::ownsQueue() {
+    pthread_mutex_lock(&mutex);
+    const bool owns = local && owner >= 0;
+    pthread_mutex_unlock(&mutex);
+    return owns;
+}
+
 void DownloadController::stopService(){remote.stopService();}
 
 void DownloadController::loop(){
@@ -56,12 +72,12 @@ void DownloadController::loop(){
         if(doSetup){saved.reset();if(savedOwner>=0){flock(savedOwner,LOCK_UN);close(savedOwner);}remote.setup();setupAt=time(0);pthread_mutex_lock(&mutex);++version;pthread_mutex_unlock(&mutex);}
 
         if(doDiscover){
-            const int source=sourceForURL(gameToRead.url);std::string html;
+            const auto table=sourceSnapshot();const int source=table->indexForURL(gameToRead.url);std::string html;
 #ifndef PORTAL_HOST
             portalNetworkTrace("app game-page start game=%d source=%d",gameToRead.id,source);
 #endif
-            bool ok=sourceURL(gameToRead.url)&&fetch(gameToRead.url,html,4*1024*1024,sourceOrigin(source)+"/");
-            auto found=ok?parseDownloadLinks(html,source):std::vector<TorrentLink>{};
+            bool ok=source&&fetch(gameToRead.url,html,4*1024*1024,table->origin(source)+"/");
+            auto found=ok?parseDownloadLinksWith(*table,html,source):std::vector<TorrentLink>{};
             std::string error=!ok?"Could not read the game page. Check internet and retry.":found.empty()?"No public torrent link found on this game page.":"";
 #ifndef PORTAL_HOST
             portalNetworkTrace("app game-page result game=%d ok=%d bytes=%zu links=%zu result=%s",gameToRead.id,ok?1:0,html.size(),found.size(),error.empty()?"ok":error.c_str());

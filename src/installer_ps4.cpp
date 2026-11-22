@@ -4,6 +4,7 @@
 #include "bgft_abi.h"
 #include <orbis/Sysmodule.h>
 #include <orbis/UserService.h>
+#include <orbis/AppInstUtil.h>
 #ifndef PORTAL_HOST
 #include <orbis/libkernel.h>
 #else
@@ -12,6 +13,7 @@ extern "C" int32_t sceKernelGetModuleList(uint32_t*,size_t,size_t*);
 extern "C" int32_t sceKernelGetModuleInfo(uint32_t,OrbisKernelModuleInfo*);
 extern "C" uint32_t sceKernelLoadStartModule(const char*,size_t,const void*,uint32_t,void*,void*);
 extern "C" const char* sceKernelGetFsSandboxRandomWord();
+extern "C" int32_t sceKernelDlsym(int32_t,const char*,void**);
 #endif
 #include <cstdlib>
 #include <cstring>
@@ -126,4 +128,54 @@ static bool pollTask(int id,int&percent,bool&complete,std::string&error){
     }
     return true;
 }
-InstallBackend ps4InstallBackend(){return {registerTask,startTask,pollTask,resumeTask};}
+template<class Function>
+static bool appInstSymbol(int handle, const char* name, Function& function, std::string& error) {
+    void* symbol = nullptr;
+    const int result = sceKernelDlsym(handle, name, &symbol);
+    if (result || !symbol) {
+        error = apiError(name, result);
+        return false;
+    }
+    function = reinterpret_cast<Function>(symbol);
+    return true;
+}
+
+static bool uninstallDownloadWorker(std::string& error) {
+    constexpr const char* title = "NULL00003";
+    constexpr const char* content = "IV0000-NULL00003_00-NULLSTOREWORKER0";
+    int handle = loadedModule("libSceAppInstUtil");
+    if (handle < 0) {
+        const int result = sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_APP_INST_UTIL);
+        if (result) { error = apiError("Worker uninstall module unavailable", result); return false; }
+        handle = loadedModule("libSceAppInstUtil");
+    }
+    if (handle < 0) { error = "PS4 could not open the worker uninstall module."; return false; }
+
+    decltype(&sceAppInstUtilInitialize) init;
+    decltype(&sceAppInstUtilTerminate) term;
+    decltype(&sceAppInstUtilAppExists) exists;
+    decltype(&sceAppInstUtilAppIsInInstalling) installing;
+    decltype(&sceAppInstUtilAppUnInstall) remove;
+    if (!appInstSymbol(handle, "sceAppInstUtilInitialize", init, error) ||
+        !appInstSymbol(handle, "sceAppInstUtilTerminate", term, error) ||
+        !appInstSymbol(handle, "sceAppInstUtilAppExists", exists, error) ||
+        !appInstSymbol(handle, "sceAppInstUtilAppIsInInstalling", installing, error) ||
+        !appInstSymbol(handle, "sceAppInstUtilAppUnInstall", remove, error)) return false;
+
+    int result = init();
+    if (result) { error = apiError("Could not initialize worker removal", result); return false; }
+    int32_t present = 0;
+    if (installing(content)) {
+        error = "Wait for the worker installation to finish before removing it.";
+    } else if ((result = exists(title, &present)) != 0) {
+        error = apiError("Could not check the installed worker", result);
+    } else if (present) {
+        if ((result = remove(title)) != 0) error = apiError("PS4 could not uninstall the worker", result);
+        else if ((result = exists(title, &present)) != 0) error = apiError("Could not verify worker removal", result);
+        else if (present) error = "PS4 accepted removal. The worker is still listed. Check Notifications.";
+    }
+    term();
+    installLog("Download Worker uninstall (%s): %s", title, error.empty() ? "confirmed absent" : error.c_str());
+    return error.empty();
+}
+InstallBackend ps4InstallBackend(){return {registerTask,startTask,pollTask,resumeTask,uninstallDownloadWorker};}

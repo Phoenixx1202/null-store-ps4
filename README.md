@@ -45,11 +45,13 @@ The main app downloads while it is open. For transfers to continue after you clo
 2. In the same menu, choose **Start installed worker**. Wait for Downloads to show **Connected** before closing the store.
 3. Close NULL_store. The service can continue the transfer while the PS4 remains awake and HEN stays active.
 
+Use **Downloads → L3 → Uninstall worker** to remove the background worker. The store keeps your queue and files and can reinstall the worker from the same menu.
+
 The service does not download in rest mode or start automatically after a reboot. Reopen NULL_store after restarting the console.
 
 ## PS4 game catalogue and BitTorrent downloads
 
-Open **Options → Catalog source** and scan the QR code to add your sources. You can also import [sources.json](SOURCES.md) from USB on first launch. The store caches listings from each source. Open **Settings** with **Options** and choose **Refresh catalogue** to refresh it now. Starting a download fetches the torrent from its source and contacts BitTorrent trackers to find peers. Peer availability depends on the torrent and your network, so some transfers may start slowly or find no usable peers.
+PS4 Torrent, GameTorrent and Love Games are ready on first launch. To add another site, open **Options → Catalog source** and scan the QR code with your phone. You can also import [sources.json](SOURCES.md) from USB on first launch. The store caches listings from each source. Open **Settings** with **Options** and choose **Refresh catalogue** to refresh it now. Starting a download fetches the torrent from its source and contacts BitTorrent trackers to find peers. Peer availability depends on the torrent and your network, so some transfers may start slowly or find no usable peers.
 
 With a Debrid service and its API key set in **Settings**, the torrent is sent to that service instead: it downloads the game on its own servers (the queue shows its progress), then NULL_store downloads the files from the service over HTTPS, resuming a file where it stopped. The transfer's id at the service is kept next to the torrent, so pausing and resuming does not add the torrent again.
 

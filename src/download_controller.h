@@ -8,5 +8,5 @@ class DownloadController {
     static void* entry(void*);void loop();bool ensureLocalLocked(bool report);
     std::vector<DownloadRow>visibleJobs;std::string localError;
 public:
-    DownloadController(std::string,DownloadFetch);~DownloadController();bool start();void discover(const Game&);bool takeSources(std::vector<TorrentLink>&,std::string&,std::string&);bool enqueue(const Game&,const TorrentLink&,std::string&);void toggle(int);void cancel(int);void remove(int,bool deleteFiles=false);bool snapshot(uint64_t&,std::vector<DownloadRow>&);bool takeNotice(std::string&);std::string connectionStatus();void setup();void stopService();
+    DownloadController(std::string,DownloadFetch);~DownloadController();bool start();void discover(const Game&);bool takeSources(std::vector<TorrentLink>&,std::string&,std::string&);bool enqueue(const Game&,const TorrentLink&,std::string&);void toggle(int);void cancel(int);void remove(int,bool deleteFiles=false);bool snapshot(uint64_t&,std::vector<DownloadRow>&);bool takeNotice(std::string&);std::string connectionStatus();void setup();void stopService();bool stopForRemoval(std::string&);bool ownsQueue();
 };

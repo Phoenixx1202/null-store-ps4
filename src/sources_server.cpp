@@ -76,8 +76,9 @@ button.ghost{background:#1f4436;color:#e8f5ee}
 .ok{color:#5ee6a8}.bad{color:#ff8a8a}
 </style></head><body>
 <h1>NULL_store sources</h1>
-<p class="lead">Saved on your console. Press OPTIONS in the app to refresh the library.</p>
-<div class="card" id="list"></div>
+<p class="lead">Add another catalogue to your console. The store refreshes it automatically.</p>
+<h2>Included with NULL_store</h2><p id="included"></p>
+<h2>Your additional sources</h2><div class="card" id="list"></div>
 <div class="card">
   <label>Name</label><input id="label" placeholder="My store">
   <label>Site address</label><input id="base" placeholder="https://games.example.org">
@@ -91,9 +92,9 @@ button.ghost{background:#1f4436;color:#e8f5ee}
   <div id="log"></div>
 </div>
 <div class="card">
-  <label>Full file (advanced)</label>
+  <label>Additional sources JSON (advanced)</label>
   <textarea id="raw" style="width:100%;height:180px;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid #2a5643;background:#0b1a14;color:#e8f5ee;font-family:ui-monospace,monospace;font-size:.85rem"></textarea>
-  <button id="save">Save file</button>
+  <button id="save">Save additional sources</button>
 </div>
 <script>
 const code=location.pathname.split('/').filter(Boolean).pop();
@@ -104,18 +105,19 @@ const api=(path,body)=>{
 };
 function render(list){
   const box=document.getElementById('list');
-  if(!list.length){box.innerHTML='<em>No sources yet.</em>';return}
+  if(!list.length){box.innerHTML='<em>You haven’t added any sources.</em>';return}
   box.replaceChildren();
-  list.forEach((s,i)=>{
+  list.forEach(s=>{
     const row=document.createElement('p'), label=document.createElement('span'), button=document.createElement('button');
     label.textContent=s.label+' · '+s.base+' ';
     button.className='ghost'; button.textContent='Remove';
-    button.onclick=()=>api('/api/remove',JSON.stringify({index:i})).then(load);
+    button.onclick=()=>api('/api/remove',JSON.stringify({id:s.id})).then(d=>d.ok?load():log(d.error,false));
     row.append(label,button); box.append(row);
   });
 }
 function load(){
   api('/api/sources').then(d=>{
+    document.getElementById('included').textContent=(d.included||[]).join(' · ');
     render(d.sources||[]);
     document.getElementById('raw').value=JSON.stringify({version:1,sources:d.sources||[]},null,2);
     if(!d.ok)log(d.error||'Could not load',false);
@@ -362,59 +364,37 @@ void SourcesServer::handle(int client) {
     if (method == "GET" && (path == "/" || path == "/index.html" || path == "/" + sessionCode)) {
         reply = httpResponse("200 OK", "text/html; charset=utf-8", setupPage(sessionCode));
     } else if (method == "GET" && path == "/api/sources") {
-        std::string dump = sourcesToJSON(*sourceSnapshot());
-        size_t openBracket = dump.find('[');
-        size_t closeBracket = dump.rfind(']');
-        std::string array = openBracket == std::string::npos || closeBracket == std::string::npos ? "[]" : dump.substr(openBracket, closeBracket - openBracket + 1);
-        reply = httpResponse("200 OK", "application/json", "{\"ok\":true,\"code\":" + jsonEscape(sessionCode) + ",\"sources\":" + array + "}");
-    } else if (method == "POST" && path == "/api/add") {
-        SourceTable current = *sourceSnapshot();
-        SourceTable parsed;
+        const auto table = sourceSnapshot();
+        const auto custom = additionalSources(*table);
+        std::vector<std::string> included;
+        for (const auto& source : builtInSources().items) included.push_back(source.label);
+        std::string json = sourcesToJSON(custom);
+        json.insert(1, "\"ok\":true,\"included\":" + shapeListJSON(included) + ",");
+        reply = httpResponse("200 OK", "application/json", json);
+    } else if (method == "POST" && (path == "/api/add" || path == "/api/remove" || path == "/api/save")) {
+        auto additional = additionalSources(*sourceSnapshot());
         std::string error;
-        std::string wrapped = "{\"sources\":[" + entryToSourceJSON(body) + "]}";
-        JValue probeValue;
-        if (!jsonParse(wrapped, probeValue)) {
-            reply = httpResponse("200 OK", "application/json", "{\"ok\":false,\"error\":\"that entry is not valid JSON\"}");
-        } else if (!parseSourcesJSON(wrapped, parsed, error)) {
-            reply = httpResponse("200 OK", "application/json", "{\"ok\":false,\"error\":" + jsonEscape(error) + "}");
-        } else {
-            if (!parsed.items.empty()) current.items.push_back(parsed.items[0]);
-            std::string path_ = root + "/sources.json";
-            if (!saveSources(path_, current, error)) {
-                reply = httpResponse("200 OK", "application/json", "{\"ok\":false,\"error\":" + jsonEscape(error) + "}");
-            } else {
-                replaceSources(current);
-                reply = httpResponse("200 OK", "application/json", "{\"ok\":true}");
+        if (path == "/api/add") {
+            SourceTable parsed;
+            JValue entry;
+            if (!jsonParse(body, entry) || entry.type != JValue::Object) error = "A source must be a JSON object.";
+            else if (parseSourcesJSON("{\"sources\":[" + entryToSourceJSON(body) + "]}", parsed, error))
+                additional.items.push_back(parsed.items.front());
+        } else if (path == "/api/remove") {
+            JValue request;
+            if (!jsonParse(body, request)) error = "Invalid removal request.";
+            else {
+                const auto id = request.str("id");
+                const int index = id.empty() ? request.integer("index", -1) : additional.indexForId(id) - 1;
+                if (index < 0 || index >= (int)additional.items.size()) error = "No such additional source.";
+                else additional.items.erase(additional.items.begin() + index);
             }
-        }
-    } else if (method == "POST" && path == "/api/remove") {
-        int index = -1;
-        JValue request_; 
-        if (jsonParse(body, request_)) index = request_.integer("index", -1);
-        SourceTable current = *sourceSnapshot();
-        std::string error;
-        if (index < 0 || index >= (int)current.items.size()) {
-            reply = httpResponse("200 OK", "application/json", "{\"ok\":false,\"error\":\"no such source\"}");
         } else {
-            current.items.erase(current.items.begin() + index);
-            if (!saveSources(root + "/sources.json", current, error)) {
-                reply = httpResponse("200 OK", "application/json", "{\"ok\":false,\"error\":" + jsonEscape(error) + "}");
-            } else {
-                replaceSources(current);
-                reply = httpResponse("200 OK", "application/json", "{\"ok\":true}");
-            }
+            parseSourcesJSON(body, additional, error);
         }
-    } else if (method == "POST" && path == "/api/save") {
-        SourceTable parsed;
-        std::string error;
-        if (!parseSourcesJSON(body, parsed, error)) {
-            reply = httpResponse("200 OK", "application/json", "{\"ok\":false,\"error\":" + jsonEscape(error) + "}");
-        } else if (!saveSources(root + "/sources.json", parsed, error)) {
-            reply = httpResponse("200 OK", "application/json", "{\"ok\":false,\"error\":" + jsonEscape(error) + "}");
-        } else {
-            replaceSources(parsed);
-            reply = httpResponse("200 OK", "application/json", "{\"ok\":true}");
-        }
+        if (error.empty()) installAdditionalSources(root + "/sources.json", additional, error);
+        reply = httpResponse("200 OK", "application/json", error.empty() ? "{\"ok\":true}" :
+                             "{\"ok\":false,\"error\":" + jsonEscape(error) + "}");
     } else if (method == "POST" && path == "/api/test") {
         SourceTable probe;
         std::string error;

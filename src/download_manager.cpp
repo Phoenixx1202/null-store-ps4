@@ -62,11 +62,11 @@ void DownloadManager::progress(void*p,const char*phase,uint64_t done,uint64_t to
 void DownloadManager::traffic(void*p,uint64_t received){auto*w=static_cast<WorkerContext*>(p);auto*m=w->manager;pthread_mutex_lock(&m->mutex);auto*j=m->findLocked(w->jobId);if(j&&j->state==DownloadState::Active){double now=secondsNow(),dt=now-w->rateTime;if(dt>=.4){double instant=received>=w->rateBytes?(received-w->rateBytes)/dt:0;w->rateValue=w->rateValue*.6+instant*.4;j->rate=w->rateValue;w->rateBytes=received;w->rateTime=now;++m->version;}}pthread_mutex_unlock(&m->mutex);}
 void DownloadManager::error(void*p,const char*why){auto*w=static_cast<WorkerContext*>(p);auto*m=w->manager;pthread_mutex_lock(&m->mutex);auto*j=m->findLocked(w->jobId);if(j)j->error=why;pthread_mutex_unlock(&m->mutex);}
 void* DownloadManager::sourceEntry(void*p){static_cast<DownloadManager*>(p)->sourceLoop();return 0;}
-void DownloadManager::sourceLoop(){for(;;){pthread_mutex_lock(&mutex);while(!discovery&&!quitting)pthread_cond_wait(&changed,&mutex);if(quitting){pthread_mutex_unlock(&mutex);return;}Game g=sourceGame;discovery=false;pthread_mutex_unlock(&mutex);int source=sourceForURL(g.url);std::string s;
+void DownloadManager::sourceLoop(){for(;;){pthread_mutex_lock(&mutex);while(!discovery&&!quitting)pthread_cond_wait(&changed,&mutex);if(quitting){pthread_mutex_unlock(&mutex);return;}Game g=sourceGame;discovery=false;pthread_mutex_unlock(&mutex);const auto table=sourceSnapshot();const int source=table->indexForURL(g.url);std::string s;
 #ifndef PORTAL_HOST
 portalNetworkTrace("game-page start game=%d source=%d",g.id,source);
 #endif
-bool ok=sourceURL(g.url)&&fetch(g.url,s,4*1024*1024,sourceOrigin(source)+"/");auto found=ok?parseDownloadLinks(s,source):std::vector<TorrentLink>{};std::string result=!ok?"Could not read the game page. Check internet and retry.":found.empty()?"No public torrent link found on this game page.":"ok";
+bool ok=source&&fetch(g.url,s,4*1024*1024,table->origin(source)+"/");auto found=ok?parseDownloadLinksWith(*table,s,source):std::vector<TorrentLink>{};std::string result=!ok?"Could not read the game page. Check internet and retry.":found.empty()?"No public torrent link found on this game page.":"ok";
 #ifndef PORTAL_HOST
 portalNetworkTrace("game-page fetched game=%d source=%d ok=%d bytes=%zu links=%zu result=%s",g.id,source,ok?1:0,s.size(),found.size(),result.c_str());
 #endif

@@ -26,7 +26,7 @@ public:
 
     // An explicit refresh supersedes any refresh already running. `source` 0 refreshes them all;
     // `force` ignores the freshness of the saved copies.
-    void start(int source = 0, bool force = false);
+    void start(int source = 0, bool force = false, bool sourcesChanged = false);
 
     // Copies the worker's status line into `current`; true when it changed.
     bool pollStatus(std::string& current);
@@ -37,7 +37,7 @@ private:
     static void* entry(void* self);
     void run();
     void setStatus(const std::string& text);
-    void publish(const std::vector<Game>& games);
+    void publish(const std::vector<Game>& games, bool persist = true);
     void cacheCovers(const std::vector<Game>& games, int chosen, const SourceTable& sources);
 
     std::string data_;

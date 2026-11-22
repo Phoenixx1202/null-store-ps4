@@ -10,6 +10,21 @@ static int bgftModuleCalls=0;
 static const char*sandboxWord="testSandbox";static bool globalMissing=false,sandboxMissing=false;
 static std::vector<std::string>mappedNames={"libSceLibcInternal"};
 static Progress returnedProgress={};
+static int workerPresent=1, removeCalls=0, removeResult=0;
+static bool installingWorker=false;
+static int initUtil(){ return 0; }
+static int existsWorker(const char* title,int32_t* present){assert(std::string(title)=="NULL00003");*present=workerPresent;return 0;}
+static bool isInstallingWorker(const char* content){assert(std::string(content)=="IV0000-NULL00003_00-NULLSTOREWORKER0");return installingWorker;}
+static int removeWorker(const char* title){assert(std::string(title)=="NULL00003");++removeCalls;if(!removeResult)workerPresent=0;return removeResult;}
+extern "C" int32_t sceKernelDlsym(int32_t,const char* name,void** out){
+    std::string symbol=name;
+    if(symbol=="sceAppInstUtilInitialize"||symbol=="sceAppInstUtilTerminate")*out=(void*)initUtil;
+    else if(symbol=="sceAppInstUtilAppExists")*out=(void*)existsWorker;
+    else if(symbol=="sceAppInstUtilAppIsInInstalling")*out=(void*)isInstallingWorker;
+    else if(symbol=="sceAppInstUtilAppUnInstall")*out=(void*)removeWorker;
+    else return -1;
+    return 0;
+}
 extern "C" int32_t sceKernelGetModuleList(uint32_t*handles,size_t size,size_t*count){assert(size>=mappedNames.size());*count=mappedNames.size();for(size_t i=0;i<*count;i++)handles[i]=(uint32_t)i+20;return 0;}
 extern "C" int32_t sceKernelGetModuleInfo(uint32_t h,OrbisKernelModuleInfo*info){assert(info->size==sizeof *info&&h>=20&&h-20<mappedNames.size());snprintf(info->name,sizeof info->name,"%s",mappedNames[h-20].c_str());return 0;}
 extern "C" uint32_t sceSysmoduleLoadModuleInternal(enum OrbisSysModuleInternal module){
@@ -51,6 +66,18 @@ static void resetInit(){
     mappedNames={"libSceLibcInternal"};
 }
 int main(){
+    {
+        mappedNames.push_back("libSceAppInstUtil");
+        std::string error;
+        installingWorker=true;
+        assert(!ps4InstallBackend().removeWorker(error) && !removeCalls);
+        installingWorker=false; removeResult=-1; error.clear();
+        assert(!ps4InstallBackend().removeWorker(error) && workerPresent && removeCalls==1);
+        removeResult=0; error.clear();
+        assert(ps4InstallBackend().removeWorker(error) && !workerPresent && removeCalls==2);
+        assert(ps4InstallBackend().removeWorker(error) && removeCalls==2);
+        mappedNames.pop_back();
+    }
  auto api=ps4InstallBackend();InstallPackage pkg;pkg.path="/data/portal-store/downloads/7/base.pkg";pkg.name="Base";pkg.contentId="IV0000-TEST00001_00-TESTPACKAGE00001";pkg.titleId="TEST00001";pkg.contentType=0x1a;pkg.bytes=12ULL*1024*1024*1024;
  std::string error;int id=123;
  assert(api.registerTask(pkg,id,error)&&id==42&&initCalls==1&&initialCalls==0);

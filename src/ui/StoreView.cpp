@@ -135,7 +135,7 @@ void StoreView::draw(StoreState& s, float dt)
     }
 
     // Dialogs fade in; the one open is told apart by its flag.
-    const unsigned open = (s.workerMenu || s.removeMenu ? 256u : 0u) | (s.sourcePicker ? 1u : 0u) | (s.keyboard ? 2u : 0u) | (s.installPicker ? 4u : 0u) |
+    const unsigned open = (s.confirmWorkerRemoval ? 512u : s.workerMenu || s.removeMenu ? 256u : 0u) | (s.sourcePicker ? 1u : 0u) | (s.keyboard ? 2u : 0u) | (s.installPicker ? 4u : 0u) |
                           (s.settings ? 8u : 0u) | (s.downloadLocationPicker ? 16u : 0u) |
                           (s.sourceFilterPicker ? 32u : 0u) | (s.sortPicker ? 64u : 0u) | (s.debridPicker ? 128u : 0u);
     if (open != openDialogs_) {
@@ -147,11 +147,18 @@ void StoreView::draw(StoreState& s, float dt)
     if (open) {
         r_.rect(box(0, 0, kScreenW, kScreenH), kScrim.withAlpha(kScrim.a * shown));
         r_.pushOpacity(shown);
-        if (s.workerMenu || s.removeMenu) {
+        if (s.confirmWorkerRemoval) {
+            const Rect frame = dialog(1000, 500, "Uninstall download worker?");
+            r_.textFit("Downloads will continue in the open store. Your files and queue are kept.",
+                       frame.x + 56, frame.y + 145, kFontBody, kDim, frame.w - 112);
+            option(box(frame.x + 56, frame.y + 195, frame.w - 112, 58), tr("Cancel"), kFontBody, s.menuChoice == 0);
+            option(box(frame.x + 56, frame.y + 265, frame.w - 112, 58), "Uninstall worker", kFontBody, s.menuChoice == 1);
+            dialogHints(frame, {{{Key::Cross}, tr("Select")}, {{Key::Circle}, tr("Back")}});
+        } else if (s.workerMenu || s.removeMenu) {
             const Rect frame = dialog(1000, 580, s.workerMenu ? "Background downloads" : "Remove download");
-            const char* worker[] = {"Start installed worker", "Install included worker", "Stop worker", "Test torrent connection"};
+            const char* worker[] = {"Start installed worker", "Install included worker", "Stop worker", "Test torrent connection", "Uninstall worker"};
             const char* remove[] = {"Remove and keep files", "Remove and delete files", "Cancel"};
-            const int count = s.workerMenu ? 4 : 3;
+            const int count = s.workerMenu ? 5 : 3;
             for (int i = 0; i < count; ++i)
                 option(box(frame.x + 56, frame.y + 150 + i * 70, frame.w - 112, 58),
                        s.workerMenu ? worker[i] : remove[i], kFontBody, i == s.menuChoice);
@@ -238,7 +245,7 @@ void StoreView::drawGrid(StoreState& s)
 {
     const int count = static_cast<int>(s.visible.size());
     if (!count) {
-        r_.textCentered(sourceSnapshot()->empty() ? "Add a source in Settings > Catalog source" : tr("No games found"), kScreenW * 0.5f, 560, kFontTitle, kText);
+        r_.textCentered(tr("No games found"), kScreenW * 0.5f, 560, kFontTitle, kText);
         r_.textCentered(s.tab == TAB_FAVORITES ? tr("Press SQUARE on a game to save it here.")
                                                : tr("Press TRIANGLE to change your search, or CIRCLE to reset."),
                         kScreenW * 0.5f, 612, kFontBody, kMuted);
@@ -836,6 +843,7 @@ void StoreView::drawSourceFilterPicker(const StoreState& s)
                tr(sourceName(i)), kFontBody, i == s.sourceChoice);
     }
     const float x = frame.right() - 390, y = frame.y + 128;
+    r_.textFit("Add a source from your phone", x, y - 24, kFontLabel, kDim, 340);
     if (s.setupCode.size > 0) {
         const int scale = s.setupCode.scaleFor(280);
         const float side = float((s.setupCode.size + 8) * scale);

@@ -5,8 +5,7 @@
 #include <ctime>
 #include <sys/stat.h>
 
-// Per-source cache files. Named after the source slug so that reordering or
-// renaming other sources never strands a user's cached library.
+// Built-in providers retain the original numbered caches. Additional sources use their stable slug.
 inline std::string providerSlug(int source, const SourceTable& table = *sourceSnapshot()) {
     const Source* item = table.at(source);
     std::string slug = item ? sourceSlug(item->id) : "";
@@ -15,6 +14,9 @@ inline std::string providerSlug(int source, const SourceTable& table = *sourceSn
 }
 
 inline std::string providerCachePath(const std::string& root, int source, const SourceTable& table = *sourceSnapshot()) {
+    const auto* item = table.at(source);
+    if (item && item->kind != SourceKind::Custom)
+        return root + "/catalog-provider-" + std::to_string(source) + ".tsv";
     return root + "/catalog-source-" + providerSlug(source, table) + ".tsv";
 }
 
@@ -38,6 +40,9 @@ inline bool providerCacheFresh(const std::string& root, int source, time_t now =
 }
 
 inline std::string providerCoverPath(const std::string& root, int source, const SourceTable& table = *sourceSnapshot()) {
+    const auto* item = table.at(source);
+    if (item && item->kind != SourceKind::Custom)
+        return root + "/covers/provider-" + std::to_string(source);
     return root + "/covers/source-" + providerSlug(source, table);
 }
 

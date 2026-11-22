@@ -51,9 +51,9 @@ void CatalogRefresh::setStatus(const std::string& text)
     pthread_mutex_unlock(&lock_);
 }
 
-void CatalogRefresh::publish(const std::vector<Game>& games)
+void CatalogRefresh::publish(const std::vector<Game>& games, bool persist)
 {
-    writeFile(data_ + "/catalog.tsv", serialize(games));
+    if (persist) writeFile(data_ + "/catalog.tsv", serialize(games));
     pthread_mutex_lock(&lock_);
     refreshed_ = games;
     ready_ = true;
@@ -83,13 +83,13 @@ bool CatalogRefresh::pollCatalogue(std::vector<Game>& games)
     return ready;
 }
 
-void CatalogRefresh::start(int source, bool force)
+void CatalogRefresh::start(int source, bool force, bool sourcesChanged)
 {
     pthread_mutex_lock(&lock_);
     if (working_) {
-        if (force) {
+        if (force || sourcesChanged) {
             source_ = source;
-            forced_ = true;
+            forced_ = force;
             pending_ = true;
             interrupted_ = true;
             ready_ = false;
@@ -138,7 +138,13 @@ void CatalogRefresh::run()
     const bool force = forced_;
     pthread_mutex_unlock(&lock_);
 
-    for (int source = 1; source <= static_cast<int>(sources->items.size()); source++) {
+    // Check additions first, so a phone save can show new cards during a long built-in refresh.
+    std::vector<int> order;
+    for (int i = 1; i <= static_cast<int>(sources->items.size()); ++i)
+        if (sources->at(i)->kind == SourceKind::Custom) order.push_back(i);
+    for (int i = 1; i <= static_cast<int>(sources->items.size()); ++i)
+        if (sources->at(i)->kind != SourceKind::Custom) order.push_back(i);
+    for (int source : order) {
         if (interrupted_ || sources != sourceSnapshot()) return;
         if (!sources->at(source)->enabled || (chosen && source != chosen)) {
             continue;
@@ -147,7 +153,9 @@ void CatalogRefresh::run()
             cached++;
             continue;
         }
-        const int pages = sources->at(source)->maxPages;
+        const auto& provider = *sources->at(source);
+        const bool builtIn = provider.kind != SourceKind::Custom;
+        int pages = builtIn ? 1 : provider.maxPages;
         bool ok = true;
         std::vector<Game> part;
         std::set<int> ids;
@@ -164,8 +172,10 @@ void CatalogRefresh::run()
             }
             std::vector<Game> cards = parseListingWith(*sources, html, source);
             if (cards.empty()) {
+                if (builtIn) ok = false;
                 break;
             }
+            if (builtIn) pages = std::max(pages, builtInLastPage(html, provider.kind));
             size_t previousCount = ids.size();
             for (Game& game : cards) {
                 if (!ids.insert(game.id).second) {
@@ -180,6 +190,12 @@ void CatalogRefresh::run()
                     }
                 }
                 part.push_back(game);
+            }
+            if (page == 1 && !part.empty() && std::none_of(next.begin(), next.end(),
+                    [&](const Game& g) { return sources->owns(source, g.url); })) {
+                auto preview = next;
+                preview.insert(preview.end(), part.begin(), part.end());
+                publish(preview, false);
             }
             if (ids.size() == previousCount) break;
             sceKernelUsleep(350000);

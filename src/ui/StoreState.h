@@ -1,4 +1,5 @@
 #pragma once
+#include "sources.h"
 
 #include <algorithm>
 #include <map>
@@ -130,6 +131,7 @@ struct StoreState {
     std::string searchDraft, browseFolder;
     std::vector<std::pair<std::string,std::string>> folderChoices;
     bool separateListings = false;
+    bool confirmWorkerRemoval = false, uninstallWorker = false, workerRemovalBusy = false;
     bool workerMenu = false, removeMenu = false, removeFiles = false;
     bool startWorker = false, stopWorker = false, probeTorrent = false;
     int menuChoice = 0;
@@ -263,6 +265,7 @@ struct StoreState {
     void loadSettings()
     {
         const std::string text = readFile(data + "/settings.txt");
+        const auto table = sourceSnapshot();
         size_t at = 0;
         while (at < text.size()) {
             size_t end = text.find('\n', at);
@@ -274,7 +277,16 @@ struct StoreState {
             if (equals != std::string::npos) {
                 const std::string name = line.substr(0, equals);
                 const int value = atoi(line.c_str() + equals + 1);
-                if (name == "source") sourceFilter = std::max(0, std::min(int(sourceSnapshot()->items.size()), value));
+                if (name == "source") {
+                    // A custom-only installation recorded the index within sources.json.
+                    SourceTable old;
+                    std::string error;
+                    if (value > 0 && loadSources(data + "/sources.json", old, error) && old.at(value))
+                        sourceFilter = table->indexForURL(old.at(value)->base);
+                    else
+                        sourceFilter = table->at(value) ? value : 0;
+                }
+                if (name == "source-id") sourceFilter = table->indexForId(line.substr(equals + 1));
                 if (name == "sort") sort = std::max(0, std::min(3, value));
                 if (name == "official-art") officialArt = value != 0;
                 if (name == "debrid") debrid = std::max(0, std::min(kDebridCount - 1, value));
@@ -329,7 +341,9 @@ struct StoreState {
 
     void saveSettings()
     {
-        const std::string text = "source=" + std::to_string(sourceFilter) + "\nsort=" + std::to_string(sort) +
+        const auto table = sourceSnapshot();
+        const auto* source = table->at(sourceFilter);
+        const std::string text = "source-id=" + (source ? source->id : std::string()) + "\nsort=" + std::to_string(sort) +
                                  "\nofficial-art=" + (officialArt ? "1" : "0") + "\ndebrid=" + std::to_string(debrid) +
                                  "\n";
         if (!writeFile(data + "/settings.txt", text)) {
@@ -340,7 +354,7 @@ struct StoreState {
     // Any dialog is open: the controller talks to it, not to the screen below.
     bool dialogOpen() const
     {
-        return removeMenu || workerMenu || settings || sourceFilterPicker || sortPicker || debridPicker || downloadLocationPicker || installPicker ||
+        return confirmWorkerRemoval || removeMenu || workerMenu || settings || sourceFilterPicker || sortPicker || debridPicker || downloadLocationPicker || installPicker ||
                sourcePicker || keyboard;
     }
 
@@ -577,8 +591,18 @@ struct StoreState {
         notice.clear();
 
         // The dialogs of Settings: closing one goes back to Settings.
+        if (confirmWorkerRemoval) {
+            if (a == UP || a == DOWN) menuChoice = 1 - menuChoice;
+            if (a == BACK || a == CONFIRM) {
+                uninstallWorker = a == CONFIRM && menuChoice == 1;
+                confirmWorkerRemoval = false;
+                workerMenu = !uninstallWorker;
+                menuChoice = 4;
+            }
+            return;
+        }
         if (workerMenu || removeMenu) {
-            const int last = removeMenu ? 2 : 3;
+            const int last = removeMenu ? 2 : 4;
             if (a == BACK) { workerMenu = removeMenu = false; return; }
             if (a == UP) menuChoice = std::max(0, menuChoice - 1);
             if (a == DOWN) menuChoice = std::min(last, menuChoice + 1);
@@ -589,6 +613,8 @@ struct StoreState {
                     deletingJobs.insert(cancelJob);
                     hideDeletedJobs();
                 } else if (workerMenu) {
+                    if (workerRemovalBusy && menuChoice != 3) { notice = "Removing download worker…"; return; }
+                    if (menuChoice == 4) { confirmWorkerRemoval = true; menuChoice = 0; workerMenu = false; return; }
                     if (menuChoice == 0) startWorker = true;
                     if (menuChoice == 1) {
                         installJob = installSelected = 0;

@@ -26,21 +26,21 @@ bool ServiceClient::snapshot(uint64_t&stamp,std::vector<DownloadRow>&out){pthrea
 bool ServiceClient::takeNotice(std::string&out){pthread_mutex_lock(&mutex);bool ready=!notice.empty();if(ready){out=notice;notice.clear();}pthread_mutex_unlock(&mutex);return ready;}
 std::string ServiceClient::connectionStatus(){pthread_mutex_lock(&mutex);auto s=status;pthread_mutex_unlock(&mutex);return s;}
 void ServiceClient::setup(){pthread_mutex_lock(&mutex);setupRequested=true;setupBusy=true;autoStart=true;unlink((root+"/service-stopped.txt").c_str());pthread_cond_signal(&changed);pthread_mutex_unlock(&mutex);}
-void ServiceClient::stopService(){pthread_mutex_lock(&mutex);stopRequested=true;autoStart=false;writeFile(root+"/service-stopped.txt","Stopped by user\n");pthread_cond_signal(&changed);pthread_mutex_unlock(&mutex);}
+void ServiceClient::stopService(bool quiet){pthread_mutex_lock(&mutex);stopRequested=true;quietStop=quiet;autoStart=false;writeFile(root+"/service-stopped.txt","Stopped by user\n");pthread_cond_signal(&changed);pthread_mutex_unlock(&mutex);}
 bool ServiceClient::call(const Writer&w,std::string&reply,std::string&error){return request(w.bytes,reply,error);}
 void ServiceClient::loop(){
 #ifndef PORTAL_HOST
     pthread_mutex_lock(&mutex);launchBusy=true;status="Checking installed background service...";pthread_mutex_unlock(&mutex);
     portalNetworkInit();
 #endif
-    unsigned verifiedPid=0;time_t lastLaunch=0;for(;;){pthread_mutex_lock(&mutex);if(quitting){pthread_mutex_unlock(&mutex);return;}bool setup=setupRequested,stop=stopRequested,launch=autoStart;setupRequested=stopRequested=false;std::vector<std::string>pending;pending.swap(commands);pthread_mutex_unlock(&mutex);std::string error,reply;
+    unsigned verifiedPid=0;time_t lastLaunch=0;for(;;){pthread_mutex_lock(&mutex);if(quitting){pthread_mutex_unlock(&mutex);return;}bool setup=setupRequested,stop=stopRequested,quiet=quietStop,launch=autoStart;setupRequested=stopRequested=false;std::vector<std::string>pending;pending.swap(commands);pthread_mutex_unlock(&mutex);std::string error,reply;
 #ifndef PORTAL_HOST
     if(setup){pthread_mutex_lock(&mutex);status="Setting up background service...";lastSetupError.clear();pthread_mutex_unlock(&mutex);bool ok=portalStartPackagedWorker(error);if(ok)writeFile(root+"/worker-enabled.txt","enabled\n");pthread_mutex_lock(&mutex);notice=ok?"Background service started. Downloads can continue after closing NULL_store.":error;lastSetupError=ok?std::string():error;pthread_mutex_unlock(&mutex);lastLaunch=time(0);pthread_mutex_lock(&mutex);setupBusy=false;pthread_mutex_unlock(&mutex);}
 #endif
 #ifdef PORTAL_HOST
     if(setup){pthread_mutex_lock(&mutex);setupBusy=false;notice="Native service installation is unavailable in the host test.";pthread_mutex_unlock(&mutex);}
 #endif
-    if(stop){Writer w;w.u32(STOP);bool stopped=call(w,reply,error);pthread_mutex_lock(&mutex);notice=stopped?"Stop requested. Saved downloads resume when you start the service again.":"Could not confirm service shutdown: "+error;pthread_mutex_unlock(&mutex);}
+    if(stop){Writer w;w.u32(STOP);bool stopped=call(w,reply,error);pthread_mutex_lock(&mutex);if(!quiet)notice=stopped?"Stop requested. Saved downloads resume when you start the service again.":"Could not confirm service shutdown: "+error;pthread_mutex_unlock(&mutex);}
     Writer ping;ping.u32(PING);bool ok=call(ping,reply,error);bool compatible=false;std::string runningBuild;if(ok){try{Reader r(reply);compatible=r.u32()==VERSION;runningBuild=r.string();const unsigned pid=r.u32();r.end();
 #ifndef PORTAL_HOST
         if(compatible && (!pid || pid!=verifiedPid)){

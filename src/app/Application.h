@@ -59,6 +59,7 @@ private:
     bool downloadsReady_ = false;
     std::shared_ptr<const SourceTable> displayedSources_;
     bool resumeAttempted_ = false;
+    uint64_t workerStopDeadline_ = 0;
     bool installerReady_ = false;
     bool keyboardFallback_ = false;
     bool keyboardForKey_ = false; // the open keyboard types the Debrid key

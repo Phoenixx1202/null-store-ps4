@@ -91,7 +91,7 @@ int runPortalService(const std::string&root,DownloadFetch fetch,int port){
                     if (cmd == DISCOVER || cmd == ENQUEUE || cmd == ENQUEUE_FOLDER) {
                         std::string why;
                         if (!loadSourcesIntoTable(root + "/sources.json", why))
-                            throw std::runtime_error("Could not reload sources: " + why);
+                            SERVICE_LOG("Using current sources: %s", why.c_str());
                     }
                     switch(cmd){
                         case PING:r.end();data.u32(VERSION);data.string("1.1");data.u32(getpid());break;

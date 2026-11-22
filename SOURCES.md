@@ -1,21 +1,19 @@
 # Sources
 
-NULL_store ships no catalogue. The library is whatever your `sources.json` describes,
-refreshed from those sites' public listing pages.
+PS4 Torrent, GameTorrent and Love Games are included. Their PS4 listings refresh automatically. Use the phone setup to add more sites with their own listing and download rules.
 
 ## Installing a source list
 
 **From your phone (easiest).** Open **Options → Catalog source**. The screen shows a QR code
 and an address like `http://192.168.1.40:8090/418302`. Scan the code with your phone
 camera on the same Wi-Fi, or type the address. Fill in the form, press **Test** to check
-the page parses, then **Add source**. Choose **Settings → Refresh catalogue** to build the library.
+the page parses, then **Add source**. The running store picks up the new source automatically.
 
 **From a USB stick.** Create the file on a computer, put it at
 `NULL_store/sources.json` on the stick, insert it, and start NULL_store. The app copies it
 on first run, when it has no list of its own.
 
-The phone page writes the same file, so both routes mix freely. Deleting `sources.json`
-returns the app to the empty state.
+The phone page writes the same file, so both routes mix freely. This file stores your additional sources. Clearing it returns the store to the three included sources.
 
 ## Format
 
