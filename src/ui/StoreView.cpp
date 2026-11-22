@@ -78,8 +78,8 @@ GameText StoreView::textOf(const StoreState& s, const Game& game) const
 {
     GameText text = describe(game);
     if (text.titleId.empty()) {
-        const auto learnt = s.titleIds.find(game.id);
-        if (learnt != s.titleIds.end()) {
+        const auto learnt = s.displayTitleIds.find(game.id);
+        if (learnt != s.displayTitleIds.end()) {
             text.titleId = learnt->second;
         }
     }
@@ -135,7 +135,7 @@ void StoreView::draw(StoreState& s, float dt)
     }
 
     // Dialogs fade in; the one open is told apart by its flag.
-    const unsigned open = (s.sourcePicker ? 1u : 0u) | (s.keyboard ? 2u : 0u) | (s.installPicker ? 4u : 0u) |
+    const unsigned open = (s.workerMenu || s.removeMenu ? 256u : 0u) | (s.sourcePicker ? 1u : 0u) | (s.keyboard ? 2u : 0u) | (s.installPicker ? 4u : 0u) |
                           (s.settings ? 8u : 0u) | (s.downloadLocationPicker ? 16u : 0u) |
                           (s.sourceFilterPicker ? 32u : 0u) | (s.sortPicker ? 64u : 0u) | (s.debridPicker ? 128u : 0u);
     if (open != openDialogs_) {
@@ -147,6 +147,16 @@ void StoreView::draw(StoreState& s, float dt)
     if (open) {
         r_.rect(box(0, 0, kScreenW, kScreenH), kScrim.withAlpha(kScrim.a * shown));
         r_.pushOpacity(shown);
+        if (s.workerMenu || s.removeMenu) {
+            const Rect frame = dialog(1000, 580, s.workerMenu ? "Background downloads" : "Remove download");
+            const char* worker[] = {"Start installed worker", "Install included worker", "Stop worker", "Test torrent connection"};
+            const char* remove[] = {"Remove and keep files", "Remove and delete files", "Cancel"};
+            const int count = s.workerMenu ? 4 : 3;
+            for (int i = 0; i < count; ++i)
+                option(box(frame.x + 56, frame.y + 150 + i * 70, frame.w - 112, 58),
+                       s.workerMenu ? worker[i] : remove[i], kFontBody, i == s.menuChoice);
+            dialogHints(frame, {{{Key::Cross}, tr("Select")}, {{Key::Circle}, tr("Back")}});
+        }
         if (s.sourcePicker) drawSourcePicker(s);
         if (s.keyboard) drawKeyboard(s);
         if (s.installPicker) drawInstallPicker(s);
@@ -469,6 +479,29 @@ void StoreView::drawGamePage(StoreState& s, float amount)
     const std::vector<int>* group = s.currentGroup();
     const bool several = group && group->size() > 1;
     const bool favorite = group ? s.favoriteGroup(*group) : s.favorites.count(game.id) != 0;
+    const auto overview = englishOverview(chosen.title);
+    float lineY = art.bottom() + 52;
+    if (!overview.summary.empty()) {
+        r_.textLines(overview.summary, art.x, lineY, 22, kText, art.w, 5);
+        lineY += 145;
+    }
+    auto detail = s.listingDetails.find(chosen.url);
+    if (detail != s.listingDetails.end()) {
+        const auto& d = detail->second;
+        auto field = [&](const std::string& value) {
+            if (value.empty() || lineY > kHintTop - 24) return;
+            r_.textFit(value, art.x, lineY, kFontLabel, kMuted, art.w);
+            lineY += 35;
+        };
+        std::string swarm;
+        if (d.seeds >= 0) swarm = "Seeds " + std::to_string(d.seeds);
+        if (d.leeches >= 0) swarm += (swarm.empty() ? "" : "   ") + std::string("Leechers ") + std::to_string(d.leeches);
+        field(swarm);
+        field(d.genres);
+        field(d.publisher.empty() ? d.company : d.publisher);
+        if (!d.screen.empty()) field("Text: " + d.screen);
+        if (!d.audio.empty()) field("Audio: " + d.audio);
+    }
     const float x = 660.0f;
     const float top = 240.0f + slide;
     r_.text(std::string(sourceName(sourceForURL(chosen.url))) + kDot + tr("GAME DETAILS"), x, top, kFontLabel,
@@ -555,7 +588,7 @@ void StoreView::drawDownloads(StoreState& s)
                      ui::baseline(r_, kHintCenter, kFontLabel), kFontLabel, kMuted) +
              32.0f;
     }
-    r_.textFit(tr("New downloads: ") + tr(s.downloadLocationName(s.downloadLocationSelected)), x,
+    r_.textFit(tr("New downloads: ") + tr(s.downloadLocationName()), x,
                ui::baseline(r_, kHintCenter, kFontLabel), kFontLabel, kDim, 420.0f);
     // What the controller does depends on the download under the cursor:
     // only a finished one can be installed.
@@ -570,6 +603,7 @@ void StoreView::drawDownloads(StoreState& s)
         }
         hints.push_back({ { Key::Square }, finished ? tr("Delete") : tr("Cancel") });
     }
+    hints.push_back({ { Key::L3 }, "Worker" });
     hints.push_back({ { Key::Circle }, tr("Back") });
     ui::hintsUntil(r_, kContentRight, kHintTop, hints, kKeySize);
 }
@@ -678,7 +712,7 @@ void StoreView::drawKeyboard(const StoreState& s)
     const float width = frame.w - 112.0f;
     const Rect field(x, frame.y + 112.0f, width, 64.0f);
     ui::surface(r_, field, 16.0f);
-    r_.textFit(s.query + "_", field.x + 22.0f, ui::baseline(r_, field.y + 32.0f, 32), 32, kText, width - 44.0f);
+    r_.textFit(s.searchDraft + "_", field.x + 22.0f, ui::baseline(r_, field.y + 32.0f, 32), 32, kText, width - 44.0f);
 
     const float keyW = (width - 9.0f * 12.0f) / 10.0f;
     for (int i = 0; i < 40; ++i) {
@@ -701,7 +735,7 @@ void StoreView::drawKeyboard(const StoreState& s)
 
 void StoreView::drawInstallPicker(const StoreState& s)
 {
-    const Rect frame = dialog(1300, 780, tr("Install downloaded packages"));
+    const Rect frame = dialog(1300, 780, s.installJob ? tr("Install downloaded packages") : "Install download worker");
     const float x = frame.x + 56.0f;
     const float width = frame.w - 112.0f;
     r_.textFit(tr("Choose a package. Install the base game before updates or DLC."), x, frame.y + 122.0f, kFontLabel,
@@ -758,7 +792,7 @@ void StoreView::drawSettings(const StoreState& s)
     const std::string rows[SETTING_COUNT][2] = {
         { tr("Catalog source"), tr(sourceName(s.sourceFilter)) },
         { tr("Sort games by"), tr(sortName(s.sort)) },
-        { tr("Download location"), tr(s.downloadLocationName(s.downloadLocationSelected)) },
+        { tr("Download location"), tr(s.downloadLocationName()) },
         { tr("Debrid service"), tr(debridName(s.debrid)) },
         { tr("Debrid API key"), keyText },
         { tr("Official artwork"), s.officialArt ? tr("On  \xC2\xB7  official icons") : tr("Off  \xC2\xB7  source covers") },
@@ -784,12 +818,11 @@ void StoreView::drawLocationPicker(const StoreState& s)
     const float width = frame.w - 112.0f;
     r_.textFit(tr("New downloads will use this location. Existing jobs stay where they are."), x, frame.y + 120.0f,
                kFontSmall, kMuted, width);
-    for (int i = 0; i < 9; i++) {
-        option(box(x, frame.y + 148.0f + static_cast<float>(i) * 58.0f, width, 50.0f), tr(s.downloadLocationName(i)),
+    const int start = s.downloadLocationSelected / 8 * 8;
+    for (int i = start; i < std::min(start + 8, int(s.folderChoices.size())); ++i)
+        option(box(x, frame.y + 148 + (i - start) * 62, width, 54), s.folderChoices[i].first,
                kFontLabel, i == s.downloadLocationSelected);
-    }
-    r_.textFit(tr("USB destinations are checked for write access when selected."), x, frame.y + 702.0f, kFontSmall, kDim,
-               width);
+    r_.textFit(s.browseFolder, x, frame.y + 684, kFontBody, kDim, width);
     dialogHints(frame, { { { Key::Cross }, tr("Use location") }, { { Key::Circle }, tr("Back") } });
 }
 
@@ -814,7 +847,7 @@ void StoreView::drawSourceFilterPicker(const StoreState& s)
     }
     r_.textFit(s.setupURL.empty() ? "Phone setup unavailable" : s.setupURL,
                frame.x + 56, frame.bottom() - 155, kFontBody, kText, frame.w - 112);
-    dialogHints(frame, { { { Key::Cross }, tr("Choose source") }, { { Key::Circle }, tr("Back") } });
+    dialogHints(frame, { { { Key::Cross }, tr("Choose source") }, { { Key::Square }, s.separateListings ? "Group listings" : "Separate listings" }, { { Key::Circle }, tr("Back") } });
 }
 
 void StoreView::drawSortPicker(const StoreState& s)

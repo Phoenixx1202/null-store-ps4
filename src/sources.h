@@ -162,10 +162,8 @@ inline std::vector<Game> parseListingWith(const SourceTable& table, const std::s
 
 inline std::vector<Game> parseListing(const std::string& html, int source) { return parseListingWith(*sourceSnapshot(), html, source); }
 
-inline std::vector<TorrentLink> parseDownloadLinks(const std::string& html, int source) {
+inline std::vector<TorrentLink> parseDownloadLinksWith(const SourceTable& table, const std::string& html, int source) {
     std::vector<TorrentLink> links;
-    const auto sources = sourceSnapshot();
-    const auto& table = *sources;
     const Source* source_ = table.at(source);
     if (!source_ || html.empty()) return links;
     std::set<std::string> seen;
@@ -196,6 +194,10 @@ inline std::vector<TorrentLink> parseDownloadLinks(const std::string& html, int 
         }
     }
     return links;
+}
+
+inline std::vector<TorrentLink> parseDownloadLinks(const std::string& html, int source) {
+    return parseDownloadLinksWith(*sourceSnapshot(), html, source);
 }
 
 inline std::string shapeListJSON(const std::vector<std::string>& values) {

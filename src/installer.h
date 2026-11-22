@@ -21,11 +21,11 @@ std::vector<InstallPackage> scanPackages(const std::string&,int,std::string&);
 std::vector<InstallPackage> scanPackages(const std::string&,int,const std::string&,std::string&);
 inline std::string storageInstallPath(const std::string&p){return p.compare(0,6,"/data/")==0?"/user"+p:p;}
 class PackageInstaller {
-    std::string root;InstallBackend backend;pthread_mutex_t mutex;pthread_cond_t changed;pthread_t worker;bool started=false,quitting=false,scanPending=false;int scanJob=0,viewJob=0;std::string scanDir,viewError;bool loading=false;uint64_t version=1;std::vector<InstallPackage>view,tasks;
+    std::string root;InstallBackend backend;bool workerPackages;pthread_mutex_t mutex;pthread_cond_t changed;pthread_t worker;bool started=false,quitting=false,scanPending=false;int scanJob=0,viewJob=0;std::string scanDir,viewError;bool loading=false;uint64_t version=1;std::vector<InstallPackage>view,tasks;
     std::vector<InstallPackage> requests;std::string busyPath;bool journalDirty=false;int journalError=0;
     static void* entry(void*);void loop();bool saveLocked();void updateViewLocked();
 public:
-    PackageInstaller(std::string,InstallBackend);~PackageInstaller();bool start();
+    PackageInstaller(std::string,InstallBackend,bool workerPackages=true);~PackageInstaller();bool start();
     void scan(int);void scan(int,const std::string&);void submit(const std::string&);bool snapshot(uint64_t&,std::vector<InstallPackage>&,bool&,std::string&);
 };
 InstallBackend ps4InstallBackend();

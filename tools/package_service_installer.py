@@ -4,10 +4,10 @@ from pathlib import Path
 import shutil, os
 import package as builder
 ROOT=Path(__file__).resolve().parents[1]
-stage=ROOT/'build/service-installer';stage.mkdir(parents=True,exist_ok=True)
-for name in ('assets/service','sce_module','sce_sys'):
+stage=ROOT/'build/service-installer';shutil.rmtree(stage,ignore_errors=True);stage.mkdir(parents=True)
+for name in ('assets/worker','sce_module','sce_sys'):
     shutil.copytree(ROOT/name,stage/name,dirs_exist_ok=True,ignore=shutil.ignore_patterns('._*','param.sfo','COMPAT-PROVENANCE.txt'))
-for name in ('font.ttf','FONT-LICENSE.txt','brand/nullstore-bag.png'):
+for name in ('font.ttf','FONT-LICENSE.txt','font-fallback.ttf','LICENSE-font-fallback.txt','brand/nullstore-bag.png','service/cacert.pem','service/TLS-LICENSE.txt','service/TLS-PROVENANCE.txt'):
     target=stage/'assets'/name
     target.parent.mkdir(parents=True,exist_ok=True)
     shutil.copyfile(ROOT/'assets'/name,target)

@@ -51,9 +51,11 @@ class ServiceTests(unittest.TestCase):
         self.addCleanup(stop)
         for _ in range(150):
             if process.poll() is not None:self.fail((root/'service.log').read_text())
-            try:r=rpc(port,u32(1));self.assertEqual(r.n(),8);self.assertEqual(r.s(),'1.0');pid=r.n();break
+            try:r=rpc(port,u32(1));self.assertEqual(r.n(),8);self.assertEqual(r.s(),'1.1');pid=r.n();break
             except OSError:time.sleep(.02)
         else:self.fail('Service did not start')
+        identity = rpc(port, u32(12))
+        self.assertEqual((identity.n(), identity.s()), (8, 'host-test'))
         return app,process,peer,payload,pid
     def test_transfer_continues_after_client_process_exits(self):
         # Actual C++ client uses the default loopback port used on PS4.

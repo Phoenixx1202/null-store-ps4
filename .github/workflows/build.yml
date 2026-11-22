@@ -69,7 +69,7 @@ jobs:
           ls "$root/bin/linux"
 
       - name: Build the store, the setup app and the service
-        run: make -j"$(nproc)" eboot build/service-installer.bin assets/service/eboot.bin
+        run: make -j"$(nproc)" eboot build/service-installer.bin build/packaged-worker.bin
 
       # PkgTool (.NET Core 3.1) needs OpenSSL 1.1, which Ubuntu 24.04 lacks:
       # tools/ci/pkgtool.sh runs it in an Ubuntu 20.04 container.
@@ -80,7 +80,7 @@ jobs:
         run: |
           version="$(python3 -c "import re;print(re.search(r\"'APP_VER':'([^']+)'\", open('tools/package.py').read()).group(1))")"
           mkdir -p dist
-          cp build/NULL_store-test-no-service.pkg "dist/NULL_store-PS4-${version}.pkg"
+          cp build/NULL_store-test.pkg "dist/NULL_store-PS4-${version}.pkg"
           (cd dist && sha256sum *.pkg | tee SHA256SUMS.txt)
 
       - uses: actions/upload-artifact@v4

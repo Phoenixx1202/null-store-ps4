@@ -26,5 +26,37 @@ int main(){char dir[]="/tmp/portal-installer-tests-XXXXXX";assert(mkdtemp(dir));
     // A still-running owned system task is reattached, not registered a second time.
     auto saved=loadQueue(root+"/installs.tsv");auto point=saved.find("\t42\t4\t100\t");assert(point!=std::string::npos);saved.replace(point,10,"\t42\t3\t40\t");assert(saveQueue(root+"/installs.tsv",saved));
     {PackageInstaller installer(root,backend);assert(installer.start());for(int i=0;i<150&&polled<2;i++)pauseMs(10);assert(polled>=2&&registered==1&&started==1);}
+    {
+        // Use an isolated package fixture so a host-only checkout exercises setup too.
+        char previousDirectory[4096];
+        assert(getcwd(previousDirectory,sizeof previousDirectory));
+        assert(chdir(root.c_str())==0);
+        assert(mkdir("assets",0700)==0 && mkdir("assets/worker",0700)==0);
+        auto fixture=package();
+        fixture.replace(0x40,36,"IV0000-NULL00003_00-NULLSTOREWORKER0");
+        assert(writeFile("assets/worker/download-worker.pkg",fixture));
+        InstallBackend workerBackend={
+            [](const InstallPackage& p,int& id,std::string&){
+                assert(p.jobId==0&&p.contentId=="IV0000-NULL00003_00-NULLSTOREWORKER0");
+                id=43;return true;
+            },
+            [](int id,std::string&){return id==43;},
+            [](int id,int& percent,bool& complete,std::string&){percent=100;complete=true;return id==43;}
+        };
+        PackageInstaller installer(root,workerBackend);
+        assert(installer.start());
+        installer.scan(0,"");
+        uint64_t version=0;bool loading=true;std::vector<InstallPackage> view;
+        for(int i=0;i<200&&loading;i++){installer.snapshot(version,view,loading,error);pauseMs(10);}
+        assert(!loading&&view.size()==1&&view[0].jobId==0);
+        const auto staged=view[0].path;
+        assert(readFile(staged)==readFile("assets/worker/download-worker.pkg"));
+        installer.submit(staged);
+        for(int i=0;i<300&&view[0].state!=InstallState::Complete;i++){installer.snapshot(version,view,loading,error);pauseMs(10);}
+        assert(view[0].state==InstallState::Complete&&view[0].taskId==43);
+        unlink(staged.c_str());
+        unlink("assets/worker/download-worker.pkg");rmdir("assets/worker");rmdir("assets");
+        assert(chdir(previousDirectory)==0);
+    }
     unlink(path.c_str());unlink((root+"/downloads/5/link.pkg").c_str());unlink((root+"/bad.pkg").c_str());unlink((root+"/installs.tsv").c_str());unlink((root+"/installs.tsv.bak").c_str());rmdir((root+"/downloads/5").c_str());rmdir((root+"/downloads").c_str());rmdir(root.c_str());std::cout<<"PKG validation, symlink rejection, installer task journaling, duplicate prevention and relaunch reattachment passed.\n";
 }

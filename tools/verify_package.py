@@ -39,22 +39,18 @@ def verify_daemon_self(data):
     if kind!=1 or paid!=0x3100000000000002:raise RuntimeError(f'Service must use homebrew fake SELF type and daemon PAID, got type={kind:#x} paid={paid:#x}')
     print('Daemon SELF verified: fake program type and daemon authentication ID.')
 def verify(folder,catalog=False):
-    for name in SERVICE_FILES:
-        relative=Path('assets/service')/name
-        actual=folder/relative
-        expected=ROOT/relative
-        if not actual.is_file():raise RuntimeError(f'Missing from extracted PKG: {relative}')
-        if hashlib.sha256(actual.read_bytes()).digest()!=hashlib.sha256(expected.read_bytes()).digest():raise RuntimeError(f'PKG payload differs from source: {relative}')
+    required = ['assets/worker/download-worker.pkg', 'assets/worker/build-id.txt',
+                'assets/service/cacert.pem', 'sce_module/libc.prx', 'sce_module/libSceFios2.prx']
     if catalog:
-        for name in ('eboot.bin','assets/covers.pack','assets/covers.idx','assets/font.ttf','sce_module/libc.prx','sce_module/libSceFios2.prx'):
-            actual=folder/name;expected=ROOT/name
-            if not actual.is_file() or hashlib.sha256(actual.read_bytes()).digest()!=hashlib.sha256(expected.read_bytes()).digest():raise RuntimeError(f'Catalogue payload differs from source: {name}')
-        print('Catalogue payload verified: boot executable, packed artwork, index, metadata, font and runtime libraries match.')
-        verify_installer_self((folder/'eboot.bin').read_bytes())
-    sfo=(folder/'assets/service/daemon.sfo').read_bytes()
-    if sfo[:4]!=b'\x00PSF' or b'PRTS00001\0' not in sfo:raise RuntimeError('Invalid bundled service SFO')
-    verify_daemon_self((folder/'assets/service/eboot.bin').read_bytes())
-    print('Extracted PKG verified: service SFO, executable, both runtime libraries and license match source files.')
+        required.extend(['eboot.bin', 'assets/covers.pack', 'assets/covers.idx',
+                         'assets/font.ttf', 'assets/font-fallback.ttf'])
+    for name in required:
+        actual, expected = folder / name, ROOT / name
+        if not actual.is_file() or hashlib.sha256(actual.read_bytes()).digest() != hashlib.sha256(expected.read_bytes()).digest():
+            raise RuntimeError(f'Package payload mismatch: {name}')
+    if catalog:
+        verify_installer_self((folder / 'eboot.bin').read_bytes())
+    print('Bundled download worker, build ID and runtime files verified.')
 def main():
     p=argparse.ArgumentParser();p.add_argument('--catalog',action='store_true');p.add_argument('package',type=Path);p.add_argument('--tool',type=Path,required=True);args=p.parse_args()
     with tempfile.TemporaryDirectory(prefix='portal-pkg-verify-') as temporary:

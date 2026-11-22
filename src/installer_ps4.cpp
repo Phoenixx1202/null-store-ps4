@@ -1,4 +1,5 @@
 #include "installer.h"
+#include "mapped_module.h"
 #include "install_log.h"
 #include "bgft_abi.h"
 #include <orbis/Sysmodule.h>
@@ -30,18 +31,6 @@ static std::string apiError(const char*what,int code){installLog("%s: 0x%08X",wh
 static void finalize(){
     if(bgftReady){int r=bgftTerm();installLog("sceBgftServiceTerm: 0x%08X",(unsigned)r);bgftReady=false;}
     free(heap);heap=nullptr;
-}
-static int loadedModule(const char*path){
-    static_assert(sizeof(OrbisKernelModuleInfo)==352,"PS4 module-info ABI");
-    uint32_t handles[256]={};size_t count=0;int r=sceKernelGetModuleList(handles,256,&count);
-    if(r){installLog("Installer module inventory failed: 0x%08X",(unsigned)r);return -1;}
-    std::string target=path;auto slash=target.find_last_of('/');if(slash!=std::string::npos)target=target.substr(slash+1);auto dot=target.find('.');if(dot!=std::string::npos)target.resize(dot);
-    for(size_t i=0;i<std::min(count,size_t(256));i++){
-        OrbisKernelModuleInfo info={};info.size=sizeof info;if(sceKernelGetModuleInfo(handles[i],&info))continue;
-        info.name[sizeof info.name-1]=0;std::string name=info.name;
-        auto end=name.find_last_of('/');if(end!=std::string::npos)name=name.substr(end+1);end=name.find('.');if(end!=std::string::npos)name.resize(end);
-        if(name==target){installLog("Installer reusing mapped module %s: handle=0x%08X",target.c_str(),handles[i]);return (int)handles[i];}
-    }return -1;
 }
 static bool loadNativeModule(const char*name,const char*path,std::string&error){
     // Match flatz/module.c: titles see system libraries through a randomized
@@ -75,7 +64,7 @@ static bool loadModule(OrbisSysModuleInternal id,const char*name,const char*path
 }
 static bool initialize(std::string&error){
     if(bgftReady)return true;
-    installLog("NULL_store 1.0 local PKG installer: opening public BGFT session (module ready=%d, SELF installer auth configured)",moduleReady);
+    installLog("NULL_store 1.1 local PKG installer: opening public BGFT session (module ready=%d, SELF installer auth configured)",moduleReady);
     if(!moduleReady){
         if(!loadModule(ORBIS_SYSMODULE_INTERNAL_BGFT,"BGFT","/system/common/lib/libSceBgft.sprx",error))return false;
         moduleReady=true;

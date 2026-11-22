@@ -1,6 +1,8 @@
 #pragma once
 
 #include <pthread.h>
+#include <atomic>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -20,7 +22,9 @@ class CatalogRefresh {
 public:
     explicit CatalogRefresh(std::string dataPath);
 
-    // Starts a refresh unless one is running. `source` 0 refreshes them all;
+    ~CatalogRefresh();
+
+    // An explicit refresh supersedes any refresh already running. `source` 0 refreshes them all;
     // `force` ignores the freshness of the saved copies.
     void start(int source = 0, bool force = false);
 
@@ -34,11 +38,16 @@ private:
     void run();
     void setStatus(const std::string& text);
     void publish(const std::vector<Game>& games);
-    void cacheCovers(std::vector<Game>& games, int chosen);
+    void cacheCovers(const std::vector<Game>& games, int chosen, const SourceTable& sources);
 
     std::string data_;
     pthread_mutex_t lock_ = PTHREAD_MUTEX_INITIALIZER;
+    pthread_t thread_{};
+    bool joinable_ = false;
     bool working_ = false;
+    bool pending_ = false;
+    std::atomic<bool> interrupted_{false};
+    bool closing_ = false;
     bool ready_ = false;
     int source_ = 0;
     bool forced_ = false;

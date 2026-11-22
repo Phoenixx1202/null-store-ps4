@@ -3,7 +3,7 @@
 // Draws the real layout code (src/ui/StoreView.cpp) through the software render
 // backend and writes PNG files, so a screen can be checked without a console:
 //
-//   build/preview [scene ...|all]      -> build/preview/<scene>.png
+//   build/preview-tool [scene ...|all]      -> build/preview/<scene>.png
 //
 // Run it from the repository root (it reads assets/). Covers come from
 // assets/covers or build/preview-data/covers when those folders have any.
@@ -73,9 +73,9 @@ const std::vector<Scene>& scenes()
         { "catalogue-scrolled", [](StoreState& ui) {
              // Further down the list, with a few favourites marked.
              for (int index : { 1, 4, 34, 37 }) {
-                 ui.favorites.insert(ui.games[ui.visible[index]].id);
+                 if (index < int(ui.visible.size())) ui.favorites.insert(ui.games[ui.visible[index]].id);
              }
-             ui.selected = 37;
+             ui.selected = std::min(37, std::max(0, int(ui.visible.size()) - 1));
          } },
         { "favorites-empty", [](StoreState& ui) {
              ui.tab = TAB_FAVORITES;
@@ -204,6 +204,18 @@ int main(int argc, char** argv)
             continue;
         }
         StoreState ui(kAssets, kData);
+        if (ui.games.empty()) {
+            for (int i = 0; i < 48; ++i) {
+                Game game;
+                game.id = i + 1;
+                game.title = "Preview game " + std::to_string(i + 1);
+                game.year = "2025";
+                game.size = "1.4 GB";
+                ui.games.push_back(game);
+            }
+            ui.shareTitleIds();
+            ui.filter();
+        }
         scene.setup(ui);
 
         // Twice: the first pass sets the animations off, a long step later

@@ -11,10 +11,10 @@ static std::atomic<bool> fetching(false);
 static void delay(int ms){struct timespec ts={ms/1000,(ms%1000)*1000000};nanosleep(&ts,0);}
 static std::string identityMeta;
 static bool duplicateFetch(const std::string&,std::string&out,size_t,const std::string&){out=identityMeta;return true;}
-static bool fetch(const std::string&url,std::string&out,size_t,const std::string&referer){if(url.find("do=download")!=std::string::npos){assert(sourceURL(referer));fetching=true;delay(600);out="not a torrent";return true;}out="<a class=\"dl__btn\" href=\"/files/fixed.torrent\">Sugar Rush Rescue.torrent</a>";return true;}
+static bool fetch(const std::string&url,std::string&out,size_t,const std::string&referer){if(url.find("/files/fixed.torrent")!=std::string::npos || url.find("do=download")!=std::string::npos){assert(sourceURL(referer));fetching=true;delay(600);out="not a torrent";return true;}out="<a class=\"dl__btn\" href=\"/files/fixed.torrent\">Sugar Rush Rescue.torrent</a>";return true;}
 static std::string fixedPage(){return "<a class=\"dl__btn\" href=\"/files/fixed.torrent\">Sugar Rush Rescue.torrent</a>";}
 int main(){replaceSources({});registerTestSource("one","https://example.org");registerTestSource("two","https://games2.example.org");auto links=parseDownloadLinks(fixedPage(),1);assert(links.size()==1);assert(links[0].url=="https://example.org/files/fixed.torrent");assert(links[0].title=="Sugar Rush Rescue.torrent");assert(parseDownloadLinks("<a class='dl__btn' href='https://evil.example/file.torrent'>No</a>",1).empty());
-    auto several=parseDownloadLinks("<div class='dl__title'>One</div><a class='dl__btn' href='/index.php?do=download&amp;id=1'>Get</a><div class='dl__title'>Two</div><a href='/uploads/two.torrent'>Get</a>");assert(several.size()==2&&several[0].url.find("&id=1")!=std::string::npos&&several[1].url.find("two.torrent")!=std::string::npos);
+    auto several=parseDownloadLinks("<div class='dl__title'>One</div><a class='dl__btn' href='/index.php?do=download&amp;id=1'>Get</a><div class='dl__title'>Two</div><a href='/uploads/two.torrent'>Get</a>",1);assert(several.size()==2&&several[0].url.find("&id=1")!=std::string::npos&&several[1].url.find("two.torrent")!=std::string::npos);
     char dir[]="/tmp/portal-download-tests-XXXXXX";assert(mkdtemp(dir));std::string root=dir;Game g;g.id=773;g.title="Generated catalog fixture";g.url="https://example.org/773-sugar-rush-rescue.html";uint64_t stamp=0;std::vector<DownloadRow>jobs;std::string why;
     {DownloadManager m(root,fetch);assert(m.enqueue(g,links[0],why));assert(!m.enqueue(g,links[0],why));assert(m.snapshot(stamp,jobs)&&jobs.size()==1);m.remove(jobs[0].id);assert(m.snapshot(stamp,jobs)&&jobs.empty());assert(m.enqueue(g,links[0],why));assert(m.snapshot(stamp,jobs)&&jobs.size()==1&&jobs[0].id==1);m.toggle(jobs[0].id);assert(m.snapshot(stamp,jobs)&&jobs[0].state==DownloadState::Paused);}
     {DownloadManager m(root,fetch);stamp=0;assert(m.snapshot(stamp,jobs)&&jobs[0].state==DownloadState::Paused);assert(m.start());m.toggle(jobs[0].id);
@@ -26,6 +26,15 @@ int main(){replaceSources({});registerTestSource("one","https://example.org");re
     std::string states;for(int state=0;state<7;++state)states+=std::to_string(state+1)+"\t773\tFixture\thttps://example.org/index.php?do=download&id="+std::to_string(state+1)+"\t"+std::to_string(state)+"\t0\t0\t\thttps://example.org/773-test.html\n";
     assert(saveQueue(root+"/downloads.tsv",states));
     {DownloadManager m(root,fetch);stamp=0;m.snapshot(stamp,jobs);assert(jobs.size()==7);assert(jobs[0].state==DownloadState::Queued&&jobs[1].state==DownloadState::Queued);assert(jobs[2].state==DownloadState::Paused&&jobs[3].state==DownloadState::Paused);assert(jobs[4].state==DownloadState::Complete&&jobs[5].state==DownloadState::Failed&&jobs[6].state==DownloadState::Cancelled);}
+    {
+        const auto configured = sourceSnapshot();
+        replaceSources({});
+        DownloadManager m(root,fetch);
+        stamp=0;
+        assert(m.snapshot(stamp,jobs) && jobs.size()==7);
+        assert(jobs[4].state==DownloadState::Complete);
+        replaceSources(*configured);
+    }
     assert(saveQueue(root+"/downloads.tsv",states));assert(writeFile(root+"/downloads.tsv","PORTAL_QUEUE_V2\tbroken\n"));
     {DownloadManager m(root,fetch);stamp=0;m.snapshot(stamp,jobs);assert(jobs.size()==7&&jobs[0].error.find("Recovered")!=std::string::npos);}
     identityMeta="d4:infod6:lengthi1e4:name1:x12:piece lengthi1e6:pieces20:aaaaaaaaaaaaaaaaaaaaee";char hash[41];assert(torrent_identity((const unsigned char*)identityMeta.data(),identityMeta.size(),hash)==0);

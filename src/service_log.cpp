@@ -25,7 +25,7 @@ void serviceLogReopen(){
     if(serviceLogFd<0){firstError=errno;snprintf(path,sizeof path,"/user%s/service.log",root);serviceLogFd=open(path,O_WRONLY|O_CREAT|O_APPEND|O_NOFOLLOW,0644);}
     if(serviceLogFd<0)return;
     int chmodResult=fchmod(serviceLogFd,0644),chmodError=errno;
-    char line[256];int n=snprintf(line,sizeof line,"[SERVICE 1.0][pid %d uid %d][%lld] runtime log opened; primary_error=%d; fchmod=%d errno=%d\n",getpid(),getuid(),(long long)time(0),firstError,chmodResult,chmodError);
+    char line[256];int n=snprintf(line,sizeof line,"[SERVICE 1.1][pid %d uid %d][%lld] runtime log opened; primary_error=%d; fchmod=%d errno=%d\n",getpid(),getuid(),(long long)time(0),firstError,chmodResult,chmodError);
     if(n>0)writeAll(serviceLogFd,line,(size_t)n<sizeof line?(size_t)n:sizeof line-1);
     fsync(serviceLogFd);
 }
@@ -35,7 +35,7 @@ void serviceLog(const char *format,...){
     if(serviceLogFd<0)serviceLogReopen();
     if(serviceLogFd<0){errno=saved;return;}
     char line[1200];
-    int prefix=snprintf(line,sizeof line,"[SERVICE 1.0][pid %d uid %d][%lld] ",getpid(),getuid(),(long long)time(0));
+    int prefix=snprintf(line,sizeof line,"[SERVICE 1.1][pid %d uid %d][%lld] ",getpid(),getuid(),(long long)time(0));
     if(prefix<0||(size_t)prefix>=sizeof line){errno=saved;return;}
     va_list args;va_start(args,format);int body=vsnprintf(line+prefix,sizeof line-(size_t)prefix,format,args);va_end(args);
     if(body<0){errno=saved;return;}
@@ -49,13 +49,13 @@ void serviceLog(const char *format,...){
 
 static void fatalSignalLog(int sig){
     if(serviceLogFd<0)return;
-    const char *line="[SERVICE 1.0] fatal signal: unknown\n";size_t size=sizeof("[SERVICE 1.0] fatal signal: unknown\n")-1;
+    const char *line="[SERVICE 1.1] fatal signal: unknown\n";size_t size=sizeof("[SERVICE 1.1] fatal signal: unknown\n")-1;
     switch(sig){
-        case SIGSEGV:line="[SERVICE 1.0] fatal signal: SIGSEGV\n";size=sizeof("[SERVICE 1.0] fatal signal: SIGSEGV\n")-1;break;
-        case SIGBUS:line="[SERVICE 1.0] fatal signal: SIGBUS\n";size=sizeof("[SERVICE 1.0] fatal signal: SIGBUS\n")-1;break;
-        case SIGILL:line="[SERVICE 1.0] fatal signal: SIGILL\n";size=sizeof("[SERVICE 1.0] fatal signal: SIGILL\n")-1;break;
-        case SIGFPE:line="[SERVICE 1.0] fatal signal: SIGFPE\n";size=sizeof("[SERVICE 1.0] fatal signal: SIGFPE\n")-1;break;
-        case SIGABRT:line="[SERVICE 1.0] fatal signal: SIGABRT\n";size=sizeof("[SERVICE 1.0] fatal signal: SIGABRT\n")-1;break;
+        case SIGSEGV:line="[SERVICE 1.1] fatal signal: SIGSEGV\n";size=sizeof("[SERVICE 1.1] fatal signal: SIGSEGV\n")-1;break;
+        case SIGBUS:line="[SERVICE 1.1] fatal signal: SIGBUS\n";size=sizeof("[SERVICE 1.1] fatal signal: SIGBUS\n")-1;break;
+        case SIGILL:line="[SERVICE 1.1] fatal signal: SIGILL\n";size=sizeof("[SERVICE 1.1] fatal signal: SIGILL\n")-1;break;
+        case SIGFPE:line="[SERVICE 1.1] fatal signal: SIGFPE\n";size=sizeof("[SERVICE 1.1] fatal signal: SIGFPE\n")-1;break;
+        case SIGABRT:line="[SERVICE 1.1] fatal signal: SIGABRT\n";size=sizeof("[SERVICE 1.1] fatal signal: SIGABRT\n")-1;break;
     }
     writeAll(serviceLogFd,line,size);
 }

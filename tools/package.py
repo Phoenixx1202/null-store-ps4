@@ -27,12 +27,12 @@ def build_package(project,output,tool):
             packages[0].replace(output/packages[0].name)
 def build():
     build_package(ROOT/'pkg.gp4',ROOT/'build',sys.argv[2])
-def sfo(title="NULL_store",title_id="NULL00001"):
+def sfo(title="NULL_store",title_id="NULL00001",category="gde"):
     # CATEGORY gde: Piglet draws through the system compositor, which a game
     # title (gd) cannot open - eglGetDisplay fails there.
     # ATTRIBUTE 32 (0x20): the system's dialogs (the keyboard) use the console's
     # own confirm button; with 0 they confirm with Circle, the Japanese layout.
-    entries={'APP_TYPE':1,'APP_VER':'01.01','ATTRIBUTE':32,'CATEGORY':'gde','CONTENT_ID':CID,'DOWNLOAD_DATA_SIZE':0,'SYSTEM_VER':0,'TITLE':title,'TITLE_ID':title_id,'VERSION':'01.01'}
+    entries={'APP_TYPE':1,'APP_VER':'01.01','ATTRIBUTE':32,'CATEGORY':category,'CONTENT_ID':CID,'DOWNLOAD_DATA_SIZE':0,'SYSTEM_VER':0,'TITLE':title,'TITLE_ID':title_id,'VERSION':'01.01'}
     caps={'APP_VER':8,'VERSION':8,'CATEGORY':4,'CONTENT_ID':48,'TITLE':128,'TITLE_ID':12}
     keys=bytearray(); data=bytearray(); rows=[]
     for k,v in sorted(entries.items()):
@@ -52,6 +52,9 @@ def gp4():
     paths=[ROOT/'eboot.bin']
     for folder in ('assets','sce_sys','sce_module'):
         paths.extend(p for p in (ROOT/folder).rglob('*') if p.is_file() and not p.name.startswith('.') and p.suffix not in ('.json',) and p.parent!=ROOT/'assets/covers' and p.name not in ('store-icon.png','service-icon.png','COMPAT-PROVENANCE.txt'))
+    excluded = {"assets/service/eboot.bin", "assets/service/daemon.sfo", "assets/service/compat-jb.prx"}
+    paths = [p for p in paths if p.relative_to(ROOT).as_posix() not in excluded and
+             not p.relative_to(ROOT).as_posix().startswith(("assets/service/sce_module/", "assets/catalog"))]
     for p in paths:
         name=p.relative_to(ROOT).as_posix()
         if p.name=='param.sfo' and name!='sce_sys/param.sfo':

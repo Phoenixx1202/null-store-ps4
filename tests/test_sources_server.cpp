@@ -49,7 +49,7 @@ static Reply call(int port, const std::string& method, const std::string& target
 }
 
 int main() {
-    char dir[] = "build/tmp/sources-server-XXXXXX";
+    char dir[] = "/tmp/sources-server-XXXXXX";
     assert(mkdtemp(dir));
     std::string root = dir;
     replaceSources({});

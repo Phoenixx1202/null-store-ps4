@@ -33,7 +33,7 @@ Only compatible, complete PKG files can be installed this way. Archives and spli
 1. Download and install the [NULL_store PKG](../../releases/latest/download/NULL_store-PS4-01.01.pkg) with HEN active.
 2. Open **NULL_store** from the home screen. Browse the catalogue, search with **Triangle**, or save favorites with **Square**.
 3. Open a listing and choose **Download** to add its torrent to the queue.
-4. Press **R1** until **Downloads** is selected. Pause or resume jobs with **X**, cancel one with **Square** (it is removed and its files are deleted), or use **Triangle** on a completed job to install a compatible PKG.
+4. Press **R1** until **Downloads** is selected. Pause or resume jobs with **X**, press **Square** to remove a job and choose whether to keep its files, or use **Triangle** on a completed job to install a compatible PKG.
 5. Press **Options** on the catalogue to open **Settings**: catalogue source, sort order, download location, Debrid service and its API key (Real-Debrid, AllDebrid, Premiumize, TorBox, Debrid-Link), official artwork and catalogue refresh.
 6. The store follows the console's language: English (the default), Brazilian Portuguese, Spanish, Turkish, French or Italian.
 
@@ -41,8 +41,8 @@ Only compatible, complete PKG files can be installed this way. Archives and spli
 
 The main app downloads while it is open. For transfers to continue after you close it:
 
-1. Install the [Background Service PKG](../../releases/latest/download/NULL_store-Background-Service-1.0.pkg), open the setup app and press **X**.
-2. Return to NULL_store and confirm that Downloads shows **Connected**.
+1. In **Downloads**, press **L3** and choose **Install included worker**. Confirm the package installation and wait for it to finish.
+2. In the same menu, choose **Start installed worker**. Wait for Downloads to show **Connected** before closing the store.
 3. Close NULL_store. The service can continue the transfer while the PS4 remains awake and HEN stays active.
 
 The service does not download in rest mode or start automatically after a reboot. Reopen NULL_store after restarting the console.
@@ -78,7 +78,7 @@ Console testing has been performed on PS4 system software **13.00** with HEN act
 
 ### Do I need to install the Background Service package separately?
 
-Only for downloads that keep running after you close NULL_store. Without it, NULL_store downloads while it is open. The service is installed and started from the separate Background Service PKG; check that Downloads shows **Connected** and keep your PS4 awake with HEN active for background transfers.
+The store includes the download worker. Install and start it from **Downloads → L3** to continue a transfer after closing the store. The separate Background Service setup app offers another way to install and start the same worker. Foreground downloads work with the store alone.
 
 ## Disclaimer
 
@@ -92,7 +92,6 @@ The source code and host tests are available in this repository. See [BUILDING.m
 
 ## Third-party software
 
-The optional Background Service includes the unmodified `jb.prx` compatibility module from Itemzflow, licensed under GPL-3.0. The [license](https://github.com/LightningMods/Itemzflow/blob/e71c284c61db3fce53936178db30dd38be7ba47b/LICENSE), [PRX source and build files](https://github.com/LightningMods/Itemzflow/tree/e71c284c61db3fce53936178db30dd38be7ba47b/external/Jailbreak%20PRX), and [upstream module](https://github.com/LightningMods/Itemzflow/blob/e71c284c61db3fce53936178db30dd38be7ba47b/App-Media-Assets/Media/jb.prx) are available from the Itemzflow repository at the revision used for this component.
 
 The store renders with the precompiled Piglet shader binaries of the SDL2 PS4 port by cpasjuste, under the zlib license ([notice](third_party/piglet_shaders/LICENSE-SDL.txt)), and uses the public-domain [stb](third_party/stb/LICENSE) libraries for images and fonts. WebP artwork is decoded with [libwebp](third_party/libwebp/README.nullstore.txt) 1.4.0, under its [BSD license](third_party/libwebp/COPYING). Letters the store's ABeeZee font lacks (Turkish ğ, ş, İ) come from the Inter font, under the SIL Open Font License ([license](assets/LICENSE-font-fallback.txt)).
 

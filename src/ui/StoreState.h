@@ -9,6 +9,12 @@
 #include "download_model.h"
 #include "download_paths.h"
 #include "installer.h"
+#include "game_details.h"
+#ifdef _WIN32
+#include <filesystem>
+#else
+#include <dirent.h>
+#endif
 #include "ui/GameText.h"
 #include "qr.h"
 
@@ -36,6 +42,7 @@ enum Action {
     SORT,
     PAGE_PREV,
     PAGE_NEXT,
+    MANAGE,
     SETTINGS  // OPTIONS on the catalogue
 };
 
@@ -101,7 +108,7 @@ struct StoreState {
     std::set<int> favorites;
     // game id -> title ID, for the entries that do not carry one: read from the
     // game's page on its source, or taken from the same game in another source.
-    std::map<int, std::string> titleIds;
+    std::map<int, std::string> titleIds, displayTitleIds;
     // title ID -> the title's official name (orbispatches.com, the PlayStation Store).
     std::map<std::string, std::string> officialNames;
     int selected = 0, tab = 0, sort = 0, key = 0;
@@ -119,6 +126,13 @@ struct StoreState {
         setupCode = {};
         if (!url.empty()) makeQrSymbol(url, setupCode);
     }
+    std::map<std::string, ListingDetails> listingDetails;
+    std::string searchDraft, browseFolder;
+    std::vector<std::pair<std::string,std::string>> folderChoices;
+    bool separateListings = false;
+    bool workerMenu = false, removeMenu = false, removeFiles = false;
+    bool startWorker = false, stopWorker = false, probeTorrent = false;
+    int menuChoice = 0;
     int sourceChoice = 0, sortChoice = 0;
     int debrid = 0, debridChoice = 0;        // the Debrid service (0: none)
     std::map<int, std::string> debridKeys;   // API key per service, in <data>/debrid-keys.txt
@@ -160,10 +174,11 @@ struct StoreState {
         while (!downloadBase.empty() && (downloadBase.back() == '\n' || downloadBase.back() == '\r')) {
             downloadBase.pop_back();
         }
+        downloadBase = migratedDownloadPath(data, downloadBase);
         if (!validDownloadBase(data, downloadBase)) {
             downloadBase = data;
         }
-        syncDownloadLocation();
+        separateListings = readFile(data + "/catalog-display.txt") == "separate";
         loadSettings();
         games = mergedCatalog(data + "/catalog.tsv");
         shareTitleIds();
@@ -190,34 +205,31 @@ struct StoreState {
     {
         std::vector<GameText> texts(games.size());
         std::vector<std::string> names(games.size());
-        std::map<std::string, std::string> byName;
+        std::vector<Game> candidates(games.size());
+        std::vector<std::string> keys(games.size()), versions(games.size());
+        displayTitleIds.clear();
         for (size_t i = 0; i < games.size(); ++i) {
             texts[i] = describe(games[i]);
             names[i] = titleKey(texts[i].title);
             if (texts[i].titleId.empty()) {
                 const auto learnt = titleIds.find(games[i].id);
-                if (learnt != titleIds.end()) {
-                    texts[i].titleId = learnt->second;
-                }
+                if (learnt != titleIds.end()) texts[i].titleId = learnt->second;
             }
-            if (!texts[i].titleId.empty() && !names[i].empty()) {
-                byName.emplace(names[i], texts[i].titleId);
-            }
-        }
-        std::vector<std::string> keys(games.size());
-        std::vector<std::string> versions(games.size());
-        for (size_t i = 0; i < games.size(); ++i) {
-            if (texts[i].titleId.empty()) {
-                const auto same = byName.find(names[i]);
-                if (same != byName.end()) {
-                    titleIds[games[i].id] = same->second;
-                    texts[i].titleId = same->second;
-                }
-            }
-            keys[i] = !texts[i].titleId.empty() ? "id:" + texts[i].titleId
-                      : !names[i].empty()       ? "name:" + names[i]
-                                                : "game:" + std::to_string(games[i].id);
+            candidates[i].title = names[i];
+            candidates[i].year = games[i].year;
+            if (!texts[i].titleId.empty()) candidates[i].title += " (" + texts[i].titleId + ")";
             versions[i] = texts[i].version;
+        }
+        for (const auto& group : groupCatalogListings(candidates)) {
+            std::string product;
+            for (int index : group)
+                if (!texts[index].titleId.empty()) product = texts[index].titleId;
+            for (int index : group) {
+                if (!product.empty()) displayTitleIds[games[index].id] = product;
+                keys[index] = !product.empty() ? "id:" + product :
+                              group.size() > 1 ? "name:" + names[index] :
+                                                 "game:" + std::to_string(games[index].id);
+            }
         }
         const bool changed = keys != gameKeys;
         gameKeys.swap(keys);
@@ -328,7 +340,7 @@ struct StoreState {
     // Any dialog is open: the controller talks to it, not to the screen below.
     bool dialogOpen() const
     {
-        return settings || sourceFilterPicker || sortPicker || debridPicker || downloadLocationPicker || installPicker ||
+        return removeMenu || workerMenu || settings || sourceFilterPicker || sortPicker || debridPicker || downloadLocationPicker || installPicker ||
                sourcePicker || keyboard;
     }
 
@@ -350,42 +362,69 @@ struct StoreState {
         clampSelections();
     }
 
-    // Points downloadLocationSelected at the entry that matches downloadBase.
-    void syncDownloadLocation()
-    {
-        if (downloadBase == data) {
-            downloadLocationSelected = 0;
+    std::string downloadLocationName() const {
+        return downloadBase==data?"Internal storage":englishText(downloadBase,"Selected folder");
+    }
+    void browseDownloadFolder(const std::string& folder){
+        browseFolder=folder.empty()?"/":folder;
+        downloadLocationSelected=0;
+        folderChoices.clear();
+        if(browseFolder=="/"){
+            #ifdef PORTAL_HOST
+            folderChoices.push_back({"Internal storage",data});
+            #else
+            folderChoices.push_back({"/data  ·  Internal storage","/data"});
+            #endif
+#ifndef PORTAL_HOST
+            for(int port=0;port<8;++port){
+                auto path="/mnt/usb"+std::to_string(port);
+                if(mountedUsbVolume(path))
+                    folderChoices.push_back({"USB "+std::to_string(port),path});
+            }
+#endif
             return;
         }
-        for (int i = 0; i < 8; i++) {
-            if (downloadBase == "/mnt/usb" + std::to_string(i) + "/NULL_store") {
-                downloadLocationSelected = i + 1;
-            }
+        const bool selectable=validDownloadBase(data,folder);
+        if(selectable)folderChoices.push_back({"Use this folder",folder});
+        if(!downloadDirectoryChain(folder))return;
+#ifdef _WIN32
+        std::error_code ec;
+        for (std::filesystem::directory_iterator it(folder, ec), end; !ec && it != end; it.increment(ec)) {
+            const auto name = it->path().filename().string();
+#else
+        DIR* dir=opendir(folder.c_str());
+        if(!dir)return;
+        while(auto* entry=readdir(dir)){
+            const std::string name=entry->d_name;
+#endif
+            if(name.empty()||name[0]=='.'||name=="downloads")continue;
+            const auto path=folder+"/"+name;
+            struct stat info={};
+            if(validDownloadBase(data,path)&&portalPathInfo(path.c_str(),&info)==0&&S_ISDIR(info.st_mode))
+                folderChoices.push_back({englishText(name,"Folder with a non-English name"),path});
+            if(folderChoices.size()>=1024)break;
         }
+#ifndef _WIN32
+        closedir(dir);
+#endif
+        std::sort(folderChoices.begin()+(selectable?1:0),folderChoices.end(),[](const std::pair<std::string,std::string>& a,
+                                                                const std::pair<std::string,std::string>& b){
+            return lower(a.first)<lower(b.first);
+        });
     }
-
-    std::string downloadLocationName(int index) const
-    {
-        return index == 0 ? "Internal storage" : "USB " + std::to_string(index - 1);
-    }
-
-    std::string downloadLocationPath(int index) const
-    {
-        return index == 0 ? data : "/mnt/usb" + std::to_string(index - 1) + "/NULL_store";
-    }
-
     // `follow`: the game under the cursor stays under it, wherever its tile
     // moves (when the list is regrouped in the background, not when the user
     // changes the sort, the search or the source).
     void filter(bool follow = false)
     {
+        const auto table = sourceSnapshot();
         const Game* before = follow ? current() : nullptr;
         const int keepId = before ? before->id : -1;
 
         std::vector<int> matches;
         for (size_t i = 0; i < games.size(); ++i) {
             const Game& game = games[i];
-            if ((!sourceFilter || sourceForURL(game.url) == sourceFilter) &&
+            if ((!sourceFilter || table->indexForURL(game.url) == sourceFilter) &&
                 (tab != TAB_RECENT || atoi(game.year.c_str()) >= 2024) &&
                 lower(game.title).find(lower(query)) != std::string::npos) {
                 matches.push_back(static_cast<int>(i));
@@ -395,7 +434,7 @@ struct StoreState {
         std::map<int, int> ranks;
         std::map<int, int> sourceRanks;
         for (int index : matches) {
-            ranks[index] = sourceRanks[sourceForURL(games[index].url)]++;
+            ranks[index] = sourceRanks[table->indexForURL(games[index].url)]++;
         }
         std::stable_sort(matches.begin(), matches.end(), [&](int a, int b) {
             const Game& x = games[a];
@@ -403,7 +442,7 @@ struct StoreState {
             if (sort == 1) return lower(x.title) < lower(y.title);
             if (sort == 2) return x.year > y.year;
             if (sort == 3) return sizeMB(x.size) < sizeMB(y.size);
-            return ranks[a] != ranks[b] ? ranks[a] < ranks[b] : sourceForURL(x.url) < sourceForURL(y.url);
+            return ranks[a] != ranks[b] ? ranks[a] < ranks[b] : table->indexForURL(x.url) < table->indexForURL(y.url);
         });
 
         // A game takes the place of its first entry in that order.
@@ -411,7 +450,7 @@ struct StoreState {
         std::map<std::string, size_t> where;
         groups.clear();
         for (int index : matches) {
-            const std::string key = keyed ? gameKeys[index] : "game:" + std::to_string(games[index].id);
+            const std::string key = keyed && !separateListings ? gameKeys[index] : "game:" + std::to_string(games[index].id);
             const auto found = where.find(key);
             if (found == where.end()) {
                 where.emplace(key, groups.size());
@@ -538,21 +577,57 @@ struct StoreState {
         notice.clear();
 
         // The dialogs of Settings: closing one goes back to Settings.
-        if (downloadLocationPicker) {
-            if (a == BACK) {
-                downloadLocationPicker = false;
-                return;
-            }
-            if (a == UP) downloadLocationSelected = std::max(0, downloadLocationSelected - 1);
-            if (a == DOWN) downloadLocationSelected = std::min(8, downloadLocationSelected + 1);
+        if (workerMenu || removeMenu) {
+            const int last = removeMenu ? 2 : 3;
+            if (a == BACK) { workerMenu = removeMenu = false; return; }
+            if (a == UP) menuChoice = std::max(0, menuChoice - 1);
+            if (a == DOWN) menuChoice = std::min(last, menuChoice + 1);
             if (a == CONFIRM) {
-                requestedDownloadBase = downloadLocationPath(downloadLocationSelected);
-                downloadLocationRequest = true;
-                downloadLocationPicker = false;
+                if (removeMenu && menuChoice < 2) {
+                    cancelRequest = true;
+                    removeFiles = menuChoice == 1;
+                    deletingJobs.insert(cancelJob);
+                    hideDeletedJobs();
+                } else if (workerMenu) {
+                    if (menuChoice == 0) startWorker = true;
+                    if (menuChoice == 1) {
+                        installJob = installSelected = 0;
+                        installPath.clear();
+                        packages.clear();
+                        installError.clear();
+                        installPicker = installLoading = installScanRequest = true;
+                    }
+                    if (menuChoice == 2) stopWorker = true;
+                    if (menuChoice == 3) probeTorrent = true;
+                }
+                workerMenu = removeMenu = false;
+            }
+            return;
+        }
+        if(downloadLocationPicker){
+            if(a==BACK){
+                if(browseFolder=="/"){downloadLocationPicker=false;}
+                else if(browseFolder=="/data"||(browseFolder==downloadVolume(data,browseFolder)&&browseFolder.compare(0,8,"/mnt/usb")==0))browseDownloadFolder("/");
+                else browseDownloadFolder(browseFolder.substr(0,browseFolder.rfind('/')));
+            }
+            if(a==UP)downloadLocationSelected=std::max(0,downloadLocationSelected-1);
+            if(a==DOWN)downloadLocationSelected=std::max(0,std::min(int(folderChoices.size())-1,downloadLocationSelected+1));
+            if(a==CONFIRM&&!folderChoices.empty()){
+                const auto path=folderChoices[downloadLocationSelected].second;
+                if(validDownloadBase(data,browseFolder)&&downloadLocationSelected==0){
+                    requestedDownloadBase=path;
+                    downloadLocationRequest=true;downloadLocationPicker=false;
+                }else browseDownloadFolder(path);
             }
             return;
         }
         if (sourceFilterPicker) {
+            if (a == FAVORITE) {
+                separateListings = !separateListings;
+                writeFile(data + "/catalog-display.txt", separateListings ? "separate" : "grouped");
+                filter();
+                return;
+            }
             if (a == BACK) {
                 sourceFilterPicker = false;
                 return;
@@ -625,7 +700,7 @@ struct StoreState {
                     sortChoice = sort;
                     break;
                 case SETTING_LOCATION:
-                    syncDownloadLocation();
+                    browseDownloadFolder("/");
                     downloadLocationPicker = true;
                     break;
                 case SETTING_DEBRID:
@@ -679,6 +754,7 @@ struct StoreState {
             return;
         }
         if (tab == TAB_DOWNLOADS) {
+            if (a == MANAGE) { workerMenu = true; menuChoice = 0; return; }
             const DownloadRow* job = jobs.empty() ? nullptr : &jobs[std::min(jobSelected, int(jobs.size()) - 1)];
             if (a == SEARCH) { // Triangle installs the packages of a finished download
                 if (!job || job->state != DownloadState::Complete) {
@@ -698,10 +774,8 @@ struct StoreState {
                     return;
                 }
                 cancelJob = job->id;
-                cancelRequest = true;
-                deletingJobs.insert(cancelJob);
-                hideDeletedJobs();
-                notice = "Download removed. Its files are being deleted.";
+                removeMenu = true;
+                menuChoice = 2;
                 return;
             }
             if (a == BACK) {
@@ -748,17 +822,16 @@ struct StoreState {
             if (a == DOWN) key = (key + 10) % 40;
             if (a == CONFIRM) {
                 const std::string keys = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 <OK";
-                if (key < 36 && query.size() < 64) query += keys[key];
-                if (key == 36 && query.size() < 64) query += ' ';
-                if (key == 37 && !query.empty()) query.pop_back();
-                if (key == 38) query.clear();
-                if (key == 39) keyboard = false;
-                selected = 0;
-                filter();
+                if (key < 36 && searchDraft.size() < 64) searchDraft += keys[key];
+                if (key == 36 && searchDraft.size() < 64) searchDraft += ' ';
+                if (key == 37 && !searchDraft.empty()) searchDraft.pop_back();
+                if (key == 38) searchDraft.clear();
+                if (key == 39) { keyboard = false; query = searchDraft; selected = 0; filter(); }
             }
             return;
         }
         if (a == SEARCH) {
+            searchDraft = query;
             keyboard = true;
             detail = false;
             key = 0;

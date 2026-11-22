@@ -582,7 +582,7 @@ static int http_raw(const char*url,int rid,uint8_t**body,size_t*blen,char*why,si
     int err;int fd=tcp_open(ip,port,8000,&err);if(fd<0){snprintf(why,whycap,"connect: " EFMT,EARG(err));return -1;}
     size_t rcap=strlen(path)+strlen(host)+200;char*req=malloc(rcap);if(!req){close(fd);snprintf(why,whycap,"out of memory");return -1;}
     char hp[16]="";if(port!=80)snprintf(hp,sizeof hp,":%u",port);
-    int rl=snprintf(req,rcap,"GET %s HTTP/1.1\r\nHost: %s%s\r\nUser-Agent: NULL_store/1.0\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",path,host,hp);
+    int rl=snprintf(req,rcap,"GET %s HTTP/1.1\r\nHost: %s%s\r\nUser-Agent: NULL_store/1.1\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",path,host,hp);
     if(send_wait(fd,req,rl,8000)){int e=errno;free(req);close(fd);snprintf(why,whycap,"send: " EFMT,EARG(e));return -1;}
     free(req);
     size_t cap=16384,n=0;uint8_t*buf=malloc(cap+1);if(!buf){close(fd);snprintf(why,whycap,"out of memory");return -1;}
@@ -636,6 +636,90 @@ typedef struct {
 static uint32_t piece_len(torrent_t*t,uint32_t i);
 #include "torrent_resume.h"
 
+static int preview_scrape_url(const B *tracker,const uint8_t hash[20],char url[512]){
+    if(!tracker||tracker->t!='s'||tracker->n>=360)return 0;
+    char announce[360];
+    memcpy(announce,tracker->s,tracker->n);
+    announce[tracker->n]=0;
+    if(strlen(announce)!=tracker->n||strpbrk(announce,"?# \t\r\n\\"))return 0;
+    const char *host=!strncmp(announce,"https://",8)?announce+8:
+                     !strncmp(announce,"http://",7)?announce+7:NULL;
+    const char *path=host?strchr(host,'/'):NULL;
+    if(!path||strcmp(path,"/announce"))return 0;
+    // Keep automatic previews confined to known public services. Do not query
+    // private trackers or send passkeys, local addresses, or custom paths.
+    const char *publicTrackers[]={"tracker.opentrackr.org","tracker.opentrackr.org:1337",
+        "tracker.torrent.eu.org","open.stealth.si","open.stealth.si:80"};
+    int allowed=0;
+    for(size_t i=0;i<sizeof(publicTrackers)/sizeof(*publicTrackers);++i)
+        if((size_t)(path-host)==strlen(publicTrackers[i])&&!memcmp(host,publicTrackers[i],path-host))allowed=1;
+    if(!allowed)return 0;
+    char encoded[61];
+    for(size_t i=0;i<20;i++)snprintf(encoded+i*3,4,"%%%02X",hash[i]);
+    snprintf(url,512,"%.*s/scrape?info_hash=%s",(int)(path-announce),announce,encoded);
+    return 1;
+}
+int torrent_swarm_preview(const unsigned char *data,size_t length,torrent_preview_fetch fetch,void *user,int *seeds,int *leeches){
+    if(!data||!length||!fetch||!seeds||!leeches)return 0;
+    const uint8_t *cursor=data;
+    B *root=bparse(&cursor,data+length,0),*info=bget(root,"info");
+    B *privateFlag=bget(info,"private");
+    char url[512]={0};
+    uint8_t hash[20];
+    if(cursor==data+length&&info&&info->t=='d'&&!privateFlag){
+        sha1(info->st,info->en-info->st,hash);
+        if(!preview_scrape_url(bget(root,"announce"),hash,url)){
+            B *tiers=bget(root,"announce-list");
+            if(tiers&&tiers->t=='l')for(size_t i=0;i<tiers->cnt&&!url[0];++i){
+                B *tier=tiers->v[i];
+                if(tier->t=='l')for(size_t j=0;j<tier->cnt&&!url[0];++j)
+                    preview_scrape_url(tier->v[j],hash,url);
+            }
+        }
+    }
+    bfree(root);
+    if(!url[0])return 0;
+    size_t count=0;
+    uint8_t *body=fetch(user,url,&count);
+    if(!body||!count||count>256*1024){free(body);return 0;}
+    cursor=body;
+    B *reply=bparse(&cursor,body+count,0),*files=bget(reply,"files"),*entry=NULL;
+    if(cursor==body+count&&files&&files->t=='d')for(size_t i=0;i+1<files->cnt;i+=2){
+        B *key=files->v[i];
+        if(key->t=='s'&&key->n==20&&!memcmp(key->s,hash,20)){entry=files->v[i+1];break;}
+    }
+    const B *complete=bget(entry,"complete"),*incomplete=bget(entry,"incomplete");
+    int valid=complete&&incomplete&&complete->t=='i'&&incomplete->t=='i'&&
+              complete->i>=0&&complete->i<=999999999&&incomplete->i>=0&&incomplete->i<=999999999;
+    if(valid){*seeds=(int)complete->i;*leeches=(int)incomplete->i;}
+    bfree(reply);
+    free(body);
+    return valid;
+}
+uint64_t torrent_metadata_size(const unsigned char *data,size_t length){
+    if(!data||!length)return 0;
+    const uint8_t *cursor=data;
+    B *root=bparse(&cursor,data+length,0);
+    B *info=bget(root,"info");
+    B *single=bget(info,"length"),*files=bget(info,"files");
+    B *pieceLength=bget(info,"piece length"),*pieces=bget(info,"pieces");
+    uint64_t total=0;
+    if(cursor!=data+length||!info||info->t!='d'||(!!single==!!files)||
+       !pieceLength||pieceLength->t!='i'||pieceLength->i<=0||
+       !pieces||pieces->t!='s'||!pieces->n||pieces->n%20)goto done;
+    if(files&&(files->t!='l'||!files->cnt||files->cnt>8192))goto done;
+    for(size_t i=0;i<(files?files->cnt:1);i++){
+        B *size=files?bget(files->v[i],"length"):single;
+        if(!size||size->t!='i'||size->i<0||(uint64_t)size->i>(1ULL<<43)-total){
+            total=0;goto done;
+        }
+        total+=(uint64_t)size->i;
+    }
+    if(total && (total-1)/(uint64_t)pieceLength->i+1!=pieces->n/20)total=0;
+done:
+    bfree(root);
+    return total;
+}
 int torrent_identity(const unsigned char*data,size_t length,char out[41]){const uint8_t*p=data;B*root=bparse(&p,data+length,0);B*info=bget(root,"info");if(!root||p!=data+length||!info||info->t!='d'){bfree(root);return -1;}uint8_t hash[20];sha1(info->st,info->en-info->st,hash);for(int i=0;i<20;i++)sprintf(out+i*2,"%02x",hash[i]);out[40]=0;bfree(root);return 0;}
 static int mkpath(const char *path) {
  char tmp[1100];if(!path||!*path||strlen(path)>=sizeof tmp){fail("Download directory path is empty or too long");return -1;}strcpy(tmp,path);
@@ -1385,7 +1469,7 @@ int torrent_run(const char*metainfo,const char*destination,const torrent_callbac
     s.ctx_random_state=(unsigned)time(NULL)^(unsigned)(uintptr_t)cb^(unsigned)(uintptr_t)&s;if(!s.ctx_random_state)s.ctx_random_state=0x4e554c4c;
     if(!cb||!destination||strlen(destination)>700){pthread_mutex_destroy(&st_lock);pthread_mutex_destroy(&time_lock);session_bind(previous);return -1;}
     dns_cache=calloc(32,sizeof(dns_entry));if(!dns_cache){fail("Out of memory allocating DNS cache");goto early;}
-    LOG("==== NULL_store 1.0 torrent_run pid=%d: %s -> %s",getpid(),metainfo?metainfo:"(null)",destination);
+    LOG("==== NULL_store 1.1 torrent_run pid=%d: %s -> %s",getpid(),metainfo?metainfo:"(null)",destination);
     FILE*f=fopen(metainfo,"rb");if(!f){fail("Cannot read torrent file");goto early;}
     if(fseek(f,0,SEEK_END)){fclose(f);goto early;}long n=ftell(f);rewind(f);
     if(n<=0||n>MAX_META){fclose(f);fail("Torrent metadata exceeds size limit");goto early;}

@@ -22,11 +22,12 @@ RUN apt-get update \
 EOF
 fi
 
+repo=$(git rev-parse --show-toplevel)
 exec docker run --rm \
     --user "$(id -u):$(id -g)" \
     -e HOME=/tmp \
     -e DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 \
     -v "$OO_PS4_TOOLCHAIN:$OO_PS4_TOOLCHAIN:ro" \
-    -v "$PWD:$PWD" \
+    -v "$repo:$repo" \
     -w "$PWD" \
     "$image" "$OO_PS4_TOOLCHAIN/bin/linux/PkgTool.Core" "$@"
