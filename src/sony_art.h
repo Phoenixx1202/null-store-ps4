@@ -6,6 +6,7 @@
 #include <string>
 
 #include "catalog.h"
+#include "json_lite.h"
 
 // -----------------------------------------------------------------------------
 // The official pictures of a title, as the PlayStation Store publishes them.
@@ -167,6 +168,64 @@ inline std::string containerURL(const std::string& titleId, const char* country,
     return std::string(kApi) + country + "/" + language + "/999/" + titleId + "_00";
 }
 
+inline constexpr const char* kStoreRegions[] = {"BR/pt", "US/en", "GB/en", "HK/en", "JP/ja"};
+inline std::string regionalContainerURL(const std::string& titleId, const char* region)
+{
+    const char* slash = strchr(region, '/');
+    const std::string country(region, static_cast<size_t>(slash - region));
+    return containerURL(titleId, country.c_str(), slash + 1);
+}
+
+struct Media {
+    static constexpr size_t maxScreenshots = 3;
+    std::vector<std::string> screenshots;
+    std::string preview;
+    bool empty() const { return screenshots.empty() && preview.empty(); }
+};
+
+inline bool isPreviewAddress(const std::string& url)
+{
+    // The QR encoder uses byte mode for these URLs.
+    return url.size() <= 210 && isSonyPictureAddress(url) && url.size() >= 4 &&
+           lower(url.substr(url.size() - 4)) == ".mp4";
+}
+
+inline Media mediaFromContainer(const std::string& page)
+{
+    const auto document = json::parse(page);
+    const auto& list = document["mediaList"];
+    Media media;
+    for (const auto& shot : list["screenshots"].items) {
+        auto url = shot["url"].str();
+        if (url.compare(0, 7, "http://") == 0) url.replace(0, 4, "https");
+        if (!isSonyPictureAddress(url) ||
+            std::find(media.screenshots.begin(), media.screenshots.end(), url) != media.screenshots.end()) continue;
+        media.screenshots.push_back(std::move(url));
+        if (media.screenshots.size() == Media::maxScreenshots) break;
+    }
+    for (const auto& preview : list["previews"].items) {
+        auto url = preview["url"].str();
+        if (url.compare(0, 7, "http://") == 0) url.replace(0, 4, "https");
+        if (!isPreviewAddress(url)) continue;
+        const bool isTrailer = lower(url).find("trailer") != std::string::npos;
+        if (media.preview.empty() || isTrailer) media.preview = std::move(url);
+        if (isTrailer) break;
+    }
+    return media;
+}
+
+inline Media titleMedia(bool (*fetch)(const std::string&, std::string&, size_t, const std::string&),
+                        const std::string& titleId)
+{
+    for (const char* region : {"US/en", "GB/en", "BR/pt", "HK/en", "JP/ja"}) {
+        std::string page;
+        if (!fetch(regionalContainerURL(titleId, region), page, 4 * 1024 * 1024, "")) continue;
+        auto media = mediaFromContainer(page);
+        if (!media.empty()) return media;
+    }
+    return {};
+}
+
 // True when the name has no letters of another script than Latin (the
 // store's font has only Latin ones).
 inline bool latinName(const std::string& name)
@@ -192,9 +251,8 @@ inline bool titleArt(bool (*fetch)(const std::string&, std::string&, size_t, con
         return false;
     }
     bool answered = false;
-    for (const char* region : { "BR/pt", "US/en", "GB/en", "HK/en", "JP/ja" }) {
-        const char* slash = strchr(region, '/');
-        const std::string url = containerURL(titleId, std::string(region, static_cast<size_t>(slash - region)).c_str(), slash + 1);
+    for (const char* region : kStoreRegions) {
+        const std::string url = regionalContainerURL(titleId, region);
         std::string page;
         if (fetch(url, page, 4 * 1024 * 1024, "")) {
             answered = true;

@@ -8,6 +8,7 @@
 
 #ifndef NS_HOST
 #include <pthread.h>
+#include <sys/stat.h>
 #endif
 
 namespace ns {
@@ -32,6 +33,7 @@ struct GameArt::Shared {
     bool quitting = false;
 #endif
     std::string next; // the title to look up: only the newest request waits
+    bool nextNeedsMedia = false;
     bool waiting = false;
     std::vector<Result> done;
 };
@@ -96,6 +98,55 @@ GameArt::Result GameArt::load(const std::string& titleId) const
     return result;
 }
 
+GameArt::Result GameArt::loadMedia(const std::string& titleId) const
+{
+    Result result;
+    result.titleId = titleId;
+    result.media = true;
+    const std::string folder = official::folder(root_, titleId);
+    const std::string manifest = folder + "/game-media-v1.txt";
+    const auto saved = readFile(manifest);
+    sony::Media media;
+    const auto first = saved.find('\n');
+    const auto preview = saved.substr(0, first);
+    if (sony::isPreviewAddress(preview)) media.preview = preview;
+    for (size_t pos = first == std::string::npos ? saved.size() : first + 1;
+         pos < saved.size() && media.screenshots.size() < sony::Media::maxScreenshots;) {
+        const auto next = saved.find('\n', pos);
+        const auto line = saved.substr(pos, next == std::string::npos ? next : next - pos);
+        if (sony::isSonyPictureAddress(line)) media.screenshots.push_back(line);
+        pos = next == std::string::npos ? saved.size() : next + 1;
+    }
+#if !defined(NS_HOST) && NS_SONY_ART
+    if (media.empty() && fetch_) {
+        media = sony::titleMedia(fetch_, titleId);
+        if (!media.empty()) {
+            mkdir(folder.c_str(), 0777);
+            std::string urls = media.preview + "\n";
+            for (const auto& url : media.screenshots) urls += url + "\n";
+            writeFile(manifest, urls);
+        }
+    }
+#endif
+    result.preview = media.preview;
+    for (size_t i = 0; i < media.screenshots.size(); ++i) {
+        const std::string file = folder + "/screenshot-" + std::to_string(i) + ".img";
+        Image image;
+#if !defined(NS_HOST) && NS_SONY_ART
+        std::string bytes;
+        if (!image.load(file, 640) && fetch_ && fetch_(media.screenshots[i], bytes, kMaxPictureBytes, sony::kStore) &&
+            official::isPicture(bytes) &&
+            image.decode(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), 640)) {
+            writeFile(file, bytes);
+        }
+#else
+        image.load(file, 640);
+#endif
+        if (!image.empty()) result.screenshots.push_back(std::move(image));
+    }
+    return result;
+}
+
 void* GameArt::entry(void* self)
 {
     static_cast<GameArt*>(self)->run();
@@ -114,11 +165,17 @@ void GameArt::run()
             break;
         }
         const std::string titleId = shared_->next;
+        const bool needsMedia = shared_->nextNeedsMedia;
         shared_->waiting = false;
         pthread_mutex_unlock(&shared_->mutex);
         Result result = load(titleId);
         pthread_mutex_lock(&shared_->mutex);
         shared_->done.push_back(std::move(result));
+        if (shared_->quitting || !needsMedia) continue;
+        pthread_mutex_unlock(&shared_->mutex);
+        Result media = loadMedia(titleId);
+        pthread_mutex_lock(&shared_->mutex);
+        shared_->done.push_back(std::move(media));
     }
     pthread_mutex_unlock(&shared_->mutex);
 #endif
@@ -129,38 +186,38 @@ const GameArtwork* GameArt::get(const std::string& titleId)
     if (titleId.size() != 9 || !titleIdAt(titleId, 0)) {
         return nullptr; // only ever a plain title ID goes into a path
     }
-    auto found = entries_.find(titleId);
-    if (found != entries_.end()) {
-        Entry& item = found->second;
-        item.lastUsedFrame = renderer_.frame();
-        if (item.state == State::Ready) {
-            return &item.art;
-        }
-        if (item.state != State::Missing || now_ - item.missingSince < kRetrySeconds) {
-            return nullptr;
-        }
-        entries_.erase(found);
-    }
-    Entry& created = entries_[titleId];
-    created.lastUsedFrame = renderer_.frame();
+    auto [entry, inserted] = entries_.try_emplace(titleId);
+    Entry& item = entry->second;
+    item.lastUsedFrame = renderer_.frame();
+    const auto current = [&]() -> const GameArtwork* {
+        return item.art.background.valid() || !item.art.screenshots.empty() || !item.art.preview.empty() ? &item.art : nullptr;
+    };
+    if (!inserted && (item.state != State::Missing || now_ - item.missingSince < kRetrySeconds)) return current();
+    item.state = State::Loading;
+    const bool needsMedia = !item.mediaRequested;
+    item.mediaRequested = true;
 
 #ifndef NS_HOST
     if (shared_->started) {
         pthread_mutex_lock(&shared_->mutex);
         shared_->next = titleId;
+        shared_->nextNeedsMedia = needsMedia;
         shared_->waiting = true;
         pthread_cond_signal(&shared_->wake);
         pthread_mutex_unlock(&shared_->mutex);
     } else {
-        created.state = State::Missing;
-        created.missingSince = now_;
+        item.state = State::Missing;
+        item.missingSince = now_;
     }
-    return nullptr;
 #else
     Result result = load(titleId);
     finish(result);
-    return created.state == State::Ready ? &created.art : nullptr;
+    if (needsMedia) {
+        Result media = loadMedia(titleId);
+        finish(media);
+    }
 #endif
+    return current();
 }
 
 void GameArt::finish(Result& result)
@@ -170,6 +227,14 @@ void GameArt::finish(Result& result)
         return;
     }
     Entry& item = found->second;
+    if (result.media) {
+        for (auto& image : result.screenshots) {
+            Texture shot;
+            if (shot.create(renderer_.backend(), image, true)) item.art.screenshots.push_back(std::move(shot));
+        }
+        item.art.preview = std::move(result.preview);
+        return;
+    }
     if (!result.background.empty() && item.art.background.create(renderer_.backend(), result.background, true)) {
         item.art.readyTime = now_;
         item.state = State::Ready;

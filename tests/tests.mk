@@ -15,7 +15,7 @@ build/test_network_ps4: tests/test_network_ps4.cpp src/network_ps4.cpp src/netwo
 test: test-network
 test-network: build/test_network_ps4
 	./build/test_network_ps4
-build/test_sony_art: tests/test_sony_art.cpp src/sony_art.h
+build/test_sony_art: tests/test_sony_art.cpp src/sony_art.h src/json_lite.h
 	@mkdir -p build
 	$(HOST_CXX) -std=c++17 -O1 -g -fsanitize=address,undefined -Isrc $< -o $@
 .PHONY: test-sony-art
@@ -36,7 +36,7 @@ build/queue_driver: tests/queue_driver.cpp src/download_manager.cpp src/download
 	$(HOST_CXX) -DPORTAL_HOST -std=c++17 -O1 -g -fsanitize=address,undefined tests/queue_driver.cpp src/download_manager.cpp src/debrid.cpp build/torrent_host.o -lpthread -o $@
 build/test_installer: tests/test_installer.cpp src/installer.cpp src/installer.h src/queue_store.h src/path_info.h src/install_log.h src/bgft_abi.h
 	$(HOST_CXX) -DPORTAL_HOST -std=c++17 -O1 -g -fsanitize=address,undefined tests/test_installer.cpp src/installer.cpp -lpthread -o $@
-test: build/controller-driver build/test_service_permissions build/test_sources build/test_sources_server build/test_qr build/torrent_driver build/test_torrent_unit build/test_torrent_socket build/test_download_manager build/queue_driver build/test_installer build/portal-service-host build/service-client-driver
+test: build/controller-driver build/test_service_permissions build/test_sources build/test_sources_server build/test_qr build/torrent_driver build/test_torrent_unit build/test_torrent_socket build/test_download_manager build/queue_driver build/test_installer build/portal-service-host build/service-client-driver build/test_catalog
 	$(PYTHON) -m unittest discover -s tests -v
 	./build/test_service_permissions
 	./build/test_sources
@@ -46,7 +46,6 @@ test: build/controller-driver build/test_service_permissions build/test_sources 
 	./build/test_torrent_socket
 	./build/test_download_manager
 	./build/test_installer
-	$(HOST_CXX) -DPORTAL_HOST -std=c++17 -O1 -g -fsanitize=address,undefined -Isrc -idirafter $(TOOLCHAIN)/include tests/test_catalog.cpp -o build/test_catalog
 	./build/test_catalog
 build/portal-service-host: src/service_main.cpp src/service_server.cpp src/service_protocol.cpp src/download_manager.cpp src/providers.h src/catalog.h src/download_model.h src/service_protocol.h src/service_server.h src/download_manager.h src/queue_store.h build/torrent_host.o
 	$(HOST_CXX) -DPORTAL_HOST -std=c++17 -O1 -g -fsanitize=address,undefined src/service_main.cpp src/service_server.cpp src/service_protocol.cpp src/download_manager.cpp src/debrid.cpp build/torrent_host.o -lpthread -o $@
@@ -91,8 +90,10 @@ test-installer-adapter: build/test_installer_ps4 build/test_installer_retry buil
 	./build/test_installer_retry
 	./build/test_startup_ps4
 	./build/test_installer_progress
-build/test_catalog: tests/test_catalog.cpp src/ui/StoreState.h src/installer.h src/providers.h src/path_info.h
-	$(HOST_CXX) -DPORTAL_HOST -std=c++17 -O1 -g -fsanitize=address,undefined -Isrc -idirafter $(TOOLCHAIN)/include $< -o $@
+build/qr_test.o: src/qrcodegen.c src/qrcodegen.h
+	$(HOST_CC) -std=c11 -O1 -g -fsanitize=address,undefined -c $< -o $@
+build/test_catalog: tests/test_catalog.cpp src/ui/StoreState.h src/installer.h src/providers.h src/path_info.h build/qr_test.o
+	$(HOST_CXX) -DPORTAL_HOST -std=c++17 -O1 -g -fsanitize=address,undefined -Isrc -idirafter $(TOOLCHAIN)/include $< build/qr_test.o -o $@
 build/test_queue_handoff: tests/test_queue_handoff.cpp src/download_controller.cpp src/download_controller.h src/service_client.cpp src/service_client.h src/download_manager.cpp src/download_manager.h src/service_protocol.cpp src/queue_store.h build/torrent_host.o
 	$(HOST_CXX) -DPORTAL_HOST -std=c++17 -O1 -g -fsanitize=address,undefined -idirafter $(TOOLCHAIN)/include tests/test_queue_handoff.cpp src/download_controller.cpp src/service_client.cpp src/download_manager.cpp src/debrid.cpp src/service_protocol.cpp build/torrent_host.o -lpthread -o $@
 .PHONY: test-queue-handoff

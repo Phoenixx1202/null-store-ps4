@@ -137,7 +137,8 @@ void StoreView::draw(StoreState& s, float dt)
     // Dialogs fade in; the one open is told apart by its flag.
     const unsigned open = (s.workerStarting ? 1024u : s.confirmWorkerRemoval ? 512u : s.workerMenu || s.removeMenu ? 256u : 0u) | (s.sourcePicker ? 1u : 0u) | (s.keyboard ? 2u : 0u) | (s.installPicker ? 4u : 0u) |
                           (s.settings ? 8u : 0u) | (s.downloadLocationPicker ? 16u : 0u) |
-                          (s.sourceFilterPicker ? 32u : 0u) | (s.sortPicker ? 64u : 0u) | (s.debridPicker ? 128u : 0u);
+                          (s.sourceFilterPicker ? 32u : 0u) | (s.sortPicker ? 64u : 0u) | (s.debridPicker ? 128u : 0u) |
+                          (s.trailerOpen ? 2048u : 0u);
     if (open != openDialogs_) {
         openDialogs_ = open;
         dialog_.snap(0.0f);
@@ -184,6 +185,7 @@ void StoreView::draw(StoreState& s, float dt)
         if (s.sourcePicker) drawSourcePicker(s);
         if (s.keyboard) drawKeyboard(s);
         if (s.installPicker) drawInstallPicker(s);
+        if (s.trailerOpen) drawTrailer(s);
         // Settings and the choices it opens: only the one on top is drawn.
         if (s.downloadLocationPicker) {
             drawLocationPicker(s);
@@ -473,17 +475,19 @@ void StoreView::drawGamePage(StoreState& s, float amount)
     // Behind everything: the title's own background picture, dimmed for the
     // text; until it is there, the tile enlarged far past its resolution.
     const GameArtwork* scene = text.titleId.empty() || !s.officialArt ? nullptr : art_.get(text.titleId);
-    const float arrived =
-        scene ? clampf(static_cast<float>((art_.now() - scene->readyTime) / 0.35), 0.0f, 1.0f) : 0.0f;
+    s.setTrailer(game.id, scene ? scene->preview : std::string());
+    const bool haveBackground = scene && scene->background.valid();
+    const float arrived = haveBackground ?
+        clampf(static_cast<float>((art_.now() - scene->readyTime) / 0.35), 0.0f, 1.0f) : 0.0f;
     ui::background(r_, kGlow, 0.6f);
     if (cover && arrived < 1.0f) {
         r_.image(cover->texture, box(0, -420, kScreenW, kScreenW), Rect(0, 0, 1, 1), Color(1, 1, 1, 0.20f));
     }
-    if (scene) {
+    if (haveBackground) {
         r_.imageCover(scene->background, box(0, 0, kScreenW, kScreenH), Color(0.62f, 0.62f, 0.62f, arrived));
     }
     r_.gradientVertical(box(0, 0, kScreenW, kScreenH), Color(0, 0, 0, 0.25f), Color(0, 0, 0, 0.72f));
-    if (scene) {
+    if (haveBackground) {
         // Darker on the left, under the tile and the text.
         r_.gradientHorizontal(box(0, 0, kScreenW, kScreenH), Color(0, 0, 0, 0.45f * arrived), Color(0, 0, 0, 0.0f));
     }
@@ -543,23 +547,43 @@ void StoreView::drawGamePage(StoreState& s, float amount)
         ui::chip(r_, chipX, chipY, tr("Favorite"), kInk, kAccentBright);
     }
 
-    if (several) {
-        drawVersions(s, x, below + 196.0f);
-    } else {
-        ui::pillButton(r_, box(x, below + 196.0f, 220.0f, 54.0f), tr("Download"), kFontBody, true);
+    const int queued = s.matchingDownload(chosen);
+    const char* action = tr(queued >= 0 ? "Go to downloads" : "Download");
+    const float buttonY = several ? drawVersions(s, x, below + 153.0f) : below + 196.0f;
+    const float buttonWidth = std::max(220.0f, r_.measureText(action, kFontBody) + 64.0f);
+    const Rect download(x, buttonY, buttonWidth, 54.0f);
+    if (queued < 0 || s.jobs[queued].state == DownloadState::Active || s.jobs[queued].state == DownloadState::Queued) {
+        const float pulse = 0.5f - 0.5f * std::cos(reflection_ * 6.2831853f);
+        const float spread = 3.0f + 5.0f * pulse;
+        r_.roundedOutline(download.inset(-spread), download.h * 0.5f + spread,
+                          2.0f, kAccentBright.withAlpha(0.35f - 0.2f * pulse));
     }
+    ui::pillButton(r_, download, action, kFontBody, true);
 
-    ui::hintsUntil(r_, kContentRight, kHintTop,
-                   { { { Key::Cross }, several ? tr("Download this version") : tr("Download") },
-                     { { Key::Square }, favorite ? tr("Remove favorite") : tr("Favorite") },
-                     { { Key::Circle }, tr("Back") } },
-                   kKeySize);
+    if (scene && !scene->screenshots.empty()) {
+        const float mediaY = std::clamp(buttonY + 100.0f, 628.0f, 827.0f);
+        r_.text(tr("Screenshots"), x, mediaY, kFontLabel, kText);
+        float shotX = x;
+        for (const auto& shot : scene->screenshots) {
+            const Rect image(shotX, mediaY + 15.0f, 240.0f, 135.0f);
+            r_.imageCover(shot, image);
+            r_.roundedOutline(image, 2.0f, 1.0f, kGlassBorder);
+            shotX += 258.0f;
+        }
+    }
+    std::vector<Hint> hints = {
+        {{Key::Cross}, queued < 0 && several ? tr("Download this version") : action},
+        {{Key::Square}, favorite ? tr("Remove favorite") : tr("Favorite")},
+    };
+    if (s.trailerCode.size > 0) hints.push_back({{Key::L3}, tr("Trailer / preview")});
+    hints.push_back({{Key::Circle}, tr("Back")});
+    ui::hintsUntil(r_, kContentRight, kHintTop, hints, kKeySize);
     r_.popOpacity();
 }
 
 // Every download of the game: source, version and size; up and down choose
 // the one X downloads.
-void StoreView::drawVersions(StoreState& s, float x, float y)
+float StoreView::drawVersions(StoreState& s, float x, float y)
 {
     const std::vector<int>& group = *s.currentGroup();
     const int count = static_cast<int>(group.size());
@@ -567,7 +591,7 @@ void StoreView::drawVersions(StoreState& s, float x, float y)
     r_.text(tr("VERSIONS") + std::string(kDot) + std::to_string(count), x, y + 20.0f, kFontLabel,
                                kAccentBright);
 
-    constexpr int kShown = 5;
+    constexpr int kShown = 3;
     const int chosen = std::max(0, std::min(s.variantSelected, count - 1));
     const int first = std::max(0, std::min(chosen - kShown / 2, count - kShown));
     for (int row = 0; row < kShown && first + row < count; ++row) {
@@ -584,8 +608,9 @@ void StoreView::drawVersions(StoreState& s, float x, float y)
     }
     if (count > kShown) {
         r_.text(std::to_string(chosen + 1) + " / " + std::to_string(count), x,
-                y + 42.0f + kShown * 66.0f + 24.0f, kFontSmall, kMuted);
+                y + 42.0f + kShown * 66.0f + 12.0f, kFontSmall, kMuted);
     }
+    return y + 42.0f + std::min(count, kShown) * 66.0f + (count > kShown ? 30.0f : 6.0f);
 }
 
 // -- Download queue --------------------------------------------------------------
@@ -852,6 +877,27 @@ void StoreView::drawLocationPicker(const StoreState& s)
     dialogHints(frame, { { { Key::Cross }, tr("Use location") }, { { Key::Circle }, tr("Back") } });
 }
 
+void StoreView::drawQr(const QrSymbol& code, float x, float y, int boxSize)
+{
+    if (!code.size) return;
+    const int scale = code.scaleFor(boxSize);
+    const float side = float(code.pixelsFor(boxSize));
+    r_.rect(box(x, y, side, side), Color::hex(0xffffff));
+    for (int row = 0; row < code.size; ++row)
+        for (int col = 0; col < code.size; ++col)
+            if (code.dark(col, row))
+                r_.rect(box(x + (4 + col) * scale, y + (4 + row) * scale, scale, scale), Color::hex(0));
+}
+
+void StoreView::drawTrailer(const StoreState& s)
+{
+    const Rect frame = dialog(740, 560, tr("Trailer / preview"));
+    const int side = s.trailerCode.pixelsFor(300);
+    drawQr(s.trailerCode, frame.x + (frame.w - side) * 0.5f, frame.y + 105.0f, 300);
+    r_.textFit(tr("Scan to watch on your phone"), frame.x + 56.0f, frame.y + 443.0f, kFontBody, kText, frame.w - 112.0f);
+    dialogHints(frame, {{{Key::Circle}, tr("Back")}});
+}
+
 void StoreView::drawSourceFilterPicker(const StoreState& s)
 {
     const Rect frame = dialog(1200, 650, tr("Catalog source"));
@@ -863,15 +909,7 @@ void StoreView::drawSourceFilterPicker(const StoreState& s)
     }
     const float x = frame.right() - 390, y = frame.y + 128;
     r_.textFit("Add a source from your phone", x, y - 24, kFontLabel, kDim, 340);
-    if (s.setupCode.size > 0) {
-        const int scale = s.setupCode.scaleFor(280);
-        const float side = float((s.setupCode.size + 8) * scale);
-        r_.rect(box(x, y, side, side), Color::hex(0xffffff));
-        for (int row = 0; row < s.setupCode.size; ++row)
-            for (int col = 0; col < s.setupCode.size; ++col)
-                if (s.setupCode.dark(col, row))
-                    r_.rect(box(x + (4 + col) * scale, y + (4 + row) * scale, scale, scale), Color::hex(0));
-    }
+    drawQr(s.setupCode, x, y, 280);
     r_.textFit(s.setupURL.empty() ? "Phone setup unavailable" : s.setupURL,
                frame.x + 56, frame.bottom() - 155, kFontBody, kText, frame.w - 112);
     dialogHints(frame, { { { Key::Cross }, tr("Choose source") }, { { Key::Square }, s.separateListings ? "Group listings" : "Separate listings" }, { { Key::Circle }, tr("Back") } });

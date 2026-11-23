@@ -32,7 +32,7 @@ Only compatible, complete PKG files can be installed this way. Archives and spli
 
 1. Download and install the [NULL_store PKG](../../releases/latest/download/NULL_store-PS4-01.01.pkg) with HEN active.
 2. Open **NULL_store** from the home screen. Browse the catalogue, search with **Triangle**, or save favorites with **Square**.
-3. Open a listing and choose **Download** to add its torrent to the queue.
+3. Open a listing and choose **Download** to add its torrent to the queue. Once queued, **Go to downloads** jumps to that entry. When PlayStation provides a trailer or preview, press **L3** on the game page to scan its QR code and watch on your phone.
 4. Press **R1** until **Downloads** is selected. Pause or resume jobs with **X**, press **Square** to remove a job and choose whether to keep its files, or use **Triangle** on a completed job to install a compatible PKG.
 5. Press **Options** on the catalogue to open **Settings**: catalogue source, sort order, download location, Debrid service and its API key (Real-Debrid, AllDebrid, Premiumize, TorBox, Debrid-Link), official artwork and catalogue refresh.
 6. The store follows the console's language: English (the default), Brazilian Portuguese, Spanish, Turkish, French or Italian.

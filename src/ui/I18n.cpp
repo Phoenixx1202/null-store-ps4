@@ -48,6 +48,10 @@ const Row kRows[] = {
     // Game page
     { "GAME DETAILS", "DETALHES DO JOGO", "DETALLES DEL JUEGO", "OYUN AYRINTILARI", "DÉTAILS DU JEU", "DETTAGLI DEL GIOCO" },
     { "Download", "Baixar", "Descargar", "İndir", "Télécharger", "Scarica" },
+    { "Go to downloads", "Ir para downloads", "Ir a descargas", "İndirmelere git", "Voir les téléchargements", "Vai ai download" },
+    { "Screenshots", "Capturas de tela", "Capturas de pantalla", "Ekran görüntüleri", "Captures d’écran", "Screenshot" },
+    { "Trailer / preview", "Trailer / prévia", "Tráiler / avance", "Fragman / önizleme", "Bande-annonce / aperçu", "Trailer / anteprima" },
+    { "Scan to watch on your phone", "Escaneie para assistir no celular", "Escanea para ver en tu teléfono", "Telefonunda izlemek için tara", "Scannez pour regarder sur votre téléphone", "Scansiona per guardare sul telefono" },
     { "Download this version", "Baixar esta versão", "Descargar esta versión", "Bu sürümü indir", "Télécharger cette version", "Scarica questa versione" },
     { "Back", "Voltar", "Atrás", "Geri", "Retour", "Indietro" },
     { "VERSIONS", "VERSÕES", "VERSIONES", "SÜRÜMLER", "VERSIONS", "VERSIONI" },

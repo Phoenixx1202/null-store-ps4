@@ -22,6 +22,8 @@ namespace ns {
 struct GameArtwork {
     Texture background;     // 16:9
     double readyTime = 0.0; // when it was uploaded (GameArt::now): it fades in
+    std::vector<Texture> screenshots;
+    std::string preview;
 };
 
 class GameArt {
@@ -55,14 +57,19 @@ private:
         GameArtwork art;
         uint64_t lastUsedFrame = 0;
         double missingSince = 0.0;
+        bool mediaRequested = false;
     };
 
     struct Result {
         std::string titleId;
         Image background;
+        bool media = false;
+        std::vector<Image> screenshots;
+        std::string preview;
     };
 
     Result load(const std::string& titleId) const;
+    Result loadMedia(const std::string& titleId) const;
     void finish(Result& result);
     void run();
     static void* entry(void* self);

@@ -37,7 +37,9 @@ private:
     void drawGrid(StoreState& s);
     // `index`: the tile's place in s.visible (and its group in s.groups).
     void drawCard(const StoreState& s, int index, const Rect& slot, float focus, float sweep, int order);
-    void drawVersions(StoreState& s, float x, float y);
+    float drawVersions(StoreState& s, float x, float y);
+    void drawQr(const QrSymbol& code, float x, float y, int boxSize);
+    void drawTrailer(const StoreState& s);
     void drawCatalogueHints(StoreState& s);
     void drawGamePage(StoreState& s, float amount);
     // The game's name, title ID and version as the screens show them.

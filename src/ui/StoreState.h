@@ -137,6 +137,18 @@ struct StoreState {
     bool sourceFilterPicker = false, sortPicker = false;
     std::string setupURL;
     QrSymbol setupCode;
+    QrSymbol trailerCode;
+    std::string trailerURL;
+    bool trailerOpen = false;
+    int trailerGame = 0;
+
+    void setTrailer(int gameId, const std::string& url) {
+        trailerGame = gameId;
+        if (url == trailerURL) return;
+        trailerURL = url;
+        trailerCode = {};
+        if (!url.empty()) makeQrSymbol(url, trailerCode);
+    }
     void setSetupURL(const std::string& url) {
         setupURL = url;
         setupCode = {};
@@ -408,7 +420,7 @@ struct StoreState {
     // Any dialog is open: the controller talks to it, not to the screen below.
     bool dialogOpen() const
     {
-        return workerStarting || confirmWorkerRemoval || removeMenu || workerMenu || settings || sourceFilterPicker || sortPicker || debridPicker || downloadLocationPicker || installPicker ||
+        return workerStarting || confirmWorkerRemoval || removeMenu || workerMenu || settings || sourceFilterPicker || sortPicker || debridPicker || downloadLocationPicker || installPicker || trailerOpen ||
                sourcePicker || keyboard;
     }
 
@@ -595,6 +607,15 @@ struct StoreState {
 
     int selectedJob() { return jobs.empty() ? 0 : jobs[std::min(jobSelected, int(jobs.size()) - 1)].id; }
 
+    int matchingDownload(const Game& game) const
+    {
+        const auto job = std::find_if(jobs.begin(), jobs.end(), [&](const DownloadRow& entry) {
+            return !entry.removed && (!entry.page.empty() ? entry.page == game.url :
+                                     game.id > 0 && entry.gameId == game.id);
+        });
+        return job == jobs.end() ? -1 : static_cast<int>(job - jobs.begin());
+    }
+
     // Keeps the list cursors inside lists that shrank since the last frame.
     void clampSelections()
     {
@@ -606,6 +627,14 @@ struct StoreState {
     {
         Game* chosen = variant();
         if (!chosen) {
+            return;
+        }
+        const int queued = matchingDownload(*chosen);
+        if (queued >= 0) {
+            tab = TAB_DOWNLOADS;
+            detail = false;
+            jobSelected = queued;
+            dirty = true;
             return;
         }
         downloadGame = *chosen;
@@ -648,6 +677,10 @@ struct StoreState {
         if (workerStarting || startWorker) return;
         dirty = true;
         notice.clear();
+        if (trailerOpen) {
+            if (a == BACK) trailerOpen = false;
+            return;
+        }
 
         // The dialogs of Settings: closing one goes back to Settings.
         if (confirmWorkerRemoval) {
@@ -930,6 +963,7 @@ struct StoreState {
             const int entries = group ? int(group->size()) : 1;
             if (a == UP) variantSelected = std::max(0, variantSelected - 1);
             if (a == DOWN) variantSelected = std::min(entries - 1, variantSelected + 1);
+            if (a == MANAGE && current() && trailerGame == current()->id && trailerCode.size > 0) trailerOpen = true;
             if (a == CONFIRM) beginDownload();
             return;
         }

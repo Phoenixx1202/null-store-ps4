@@ -78,6 +78,14 @@ int main(){
     // Catalogue grid, search and the game page.
     ui.action(PAGE_NEXT);assert(ui.selected==StoreState::kGridPage);ui.action(PAGE_PREV);assert(ui.selected==0);ui.action(SEARCH);assert(ui.keyboard);ui.key=0;ui.action(CONFIRM);assert(ui.searchDraft=="A"&&ui.query.empty());ui.key=39;ui.action(CONFIRM);assert(!ui.keyboard);ui.action(BACK);assert(ui.query.empty());
     ui.action(CONFIRM);assert(ui.detail);ui.action(SETTINGS);assert(!ui.settings);ui.action(CONFIRM);assert(ui.sourcePicker&&ui.downloadRequest&&ui.downloadGame.id==ui.current()->id);ui.action(BACK);assert(!ui.sourcePicker&&ui.detail);ui.action(BACK);assert(!ui.detail);
+    ui.action(CONFIRM);assert(ui.detail);
+    ui.setTrailer(ui.current()->id, "https://vulcan.dl.playstation.net/example.mp4");
+    ui.action(MANAGE);assert(ui.trailerOpen&&ui.dialogOpen());ui.action(BACK);assert(!ui.trailerOpen&&ui.detail);
+    DownloadRow other;other.id=80;other.gameId=ui.variant()->id;other.page="https://example.com/other-version";
+    DownloadRow queued;queued.id=81;queued.page=ui.variant()->url;
+    ui.jobs={other,queued};
+    ui.action(CONFIRM);assert(ui.tab==TAB_DOWNLOADS&&!ui.detail&&!ui.sourcePicker&&ui.selectedJob()==81);
+    ui.jobs.clear();ui.action(BACK);
     // Download queue: Settings stays closed, only finished downloads install, Square cancels and deletes.
     ui.action(TAB_PREV);assert(ui.tab==TAB_DOWNLOADS);ui.action(SETTINGS);assert(!ui.settings);ui.action(SEARCH);assert(!ui.installPicker);
     ui.updateWorkerOptions(WorkerInstallState::Missing, false);
