@@ -182,19 +182,9 @@ bool Application::init()
     pad_.init();
 
     installer_ = std::make_unique<PackageInstaller>(data_, ps4InstallBackend());
-
-
-    setup_ = std::make_unique<SourcesServer>(data_, portalNetworkFetch);
-    if (setup_->start(8090, error) || setup_->start(0, error)) {
-        const auto address = localLanAddress();
-        if (!address.empty()) ui_->setSetupURL(setup_->urlFor(address));
-    } else {
-        ui_->notice = error;
-    }
-
     refresh_ = std::make_unique<CatalogRefresh>(data_);
     displayedSources_ = sourceSnapshot();
-    refresh_->start();
+    NS_LOG_INFO("Startup ready to draw the cached catalogue");
     return true;
 }
 
@@ -219,6 +209,11 @@ int Application::run()
 
 bool Application::frame()
 {
+    if (splashHidden_ && !catalogueRefreshStarted_) {
+        catalogueRefreshStarted_ = true;
+        NS_LOG_INFO("Starting catalogue refresh after first frame");
+        refresh_->start();
+    }
     if (textInput_.isOpen()) {
         pad_.ignoreUntilReleased();
     }
@@ -465,12 +460,19 @@ void Application::syncWorkers()
 {
     StoreState& ui = *ui_;
 
-    if (ui.sourceFilterPicker && ui.setupURL.empty() && setup_->port() > 0) {
+    if (ui.sourceFilterPicker && ui.setupURL.empty()) {
         const auto now = sceKernelGetProcessTime();
         if (now >= nextSetupAddressCheck_) {
             nextSetupAddressCheck_ = now + 5000000;
-            const auto address = localLanAddress();
-            if (!address.empty()) ui.setSetupURL(setup_->urlFor(address));
+            if (!setup_) setup_ = std::make_unique<SourcesServer>(data_, portalNetworkFetch);
+            std::string error;
+            if (!portalNetworkInit()) {
+                error = "Could not initialize networking for phone setup.";
+            } else if (setup_->port() > 0 || setup_->start(8090, error) || setup_->start(0, error)) {
+                const auto address = localLanAddress();
+                if (!address.empty()) ui.setSetupURL(setup_->urlFor(address));
+            }
+            if (!error.empty()) NS_LOG_WARN("Phone setup: %s", error.c_str());
         }
     }
     const auto table = sourceSnapshot();
@@ -636,10 +638,13 @@ bool Application::render()
                                       : 1.0f / 60.0f;
     lastFrameMicros_ = now;
 
+    const bool firstFrame = !splashHidden_ && !displayFailureSince_;
+    if (firstFrame) NS_LOG_INFO("Drawing first catalogue frame");
     covers_->pump(static_cast<double>(now) / 1000000.0);
     art_->pump(static_cast<double>(now) / 1000000.0);
     renderer_.beginFrame(theme::kBackground);
     view_->draw(*ui_, dt);
+    if (firstFrame) NS_LOG_INFO("Submitting first catalogue frame");
     if (!renderer_.endFrame()) return false;
 
     if (!splashHidden_) {

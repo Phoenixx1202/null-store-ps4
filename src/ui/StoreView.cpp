@@ -169,6 +169,7 @@ void StoreView::draw(StoreState& s, float dt)
             if (s.workerMenu && s.workerActions.size() == 1) {
                 const char* status = s.workerRemovalBusy ? "Updating worker…" :
                                      s.workerInstall == WorkerInstallState::Installing ? "Worker installation is in progress…" :
+                                     s.workerInstall == WorkerInstallState::Unknown ? "Could not determine whether the worker is installed." :
                                      "Checking worker installation…";
                 r_.textFit(status, frame.x + 56, frame.y + 126, kFontLabel, kDim, frame.w - 112);
             } else if (s.workerMenu && s.workerInstall == WorkerInstallState::Installed) {

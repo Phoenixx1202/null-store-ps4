@@ -47,6 +47,8 @@ The main app downloads while it is open. For transfers to continue after you clo
 
 Use **Downloads → L3 → Uninstall worker** to remove the background worker. The store keeps your queue and files. When the installed build matches the included worker, the menu also offers **Reinstall worker**. While the worker is running, choose **Stop worker** to return downloads to the open store.
 
+Some consoles show a separate **NULL_store Download Worker** tile on the home screen. Manage the worker from Downloads. To remove it from the home screen, highlight the worker tile, press **Options** and select **Delete** if available. You can open that menu without starting the worker.
+
 The service does not download in rest mode or start automatically after a reboot. Reopen NULL_store after restarting the console.
 
 ## PS4 game catalogue and BitTorrent downloads

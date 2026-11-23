@@ -82,8 +82,10 @@ int main(){
     ui.action(TAB_PREV);assert(ui.tab==TAB_DOWNLOADS);ui.action(SETTINGS);assert(!ui.settings);ui.action(SEARCH);assert(!ui.installPicker);
     ui.updateWorkerOptions(WorkerInstallState::Missing, false);
     ui.action(MANAGE);assert(ui.workerActions.front()==WorkerAction::Install);
-    ui.action(CONFIRM);assert(ui.installPicker&&ui.installScanRequest);ui.action(BACK);
+    ui.action(CONFIRM);assert(ui.installPicker&&ui.installScanRequest&&!ui.startWorker);ui.action(BACK);
     ui.installScanRequest=false;
+    ui.updateWorkerOptions(WorkerInstallState::Unknown, false);
+    assert(ui.workerActions==std::vector<WorkerAction>{WorkerAction::Test});
     ui.updateWorkerOptions(WorkerInstallState::Current, true);
     ui.action(MANAGE);assert(ui.workerActions.front()==WorkerAction::Stop);
     ui.action(CONFIRM);assert(ui.stopWorker&&!ui.workerMenu);ui.stopWorker=false;

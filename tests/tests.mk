@@ -1,6 +1,14 @@
 # Host checks (macOS / Linux): the torrent engine, the download queue, the
 # service protocol, the installer adapter and the store's state, built with the
 # host compiler under ASan/UBSan. Included by the Makefile.
+build/test_worker_entry: tests/test_worker_entry.cpp src/worker_entry.cpp src/worker_entry.h src/worker_launch_attempt.h
+	@mkdir -p build
+	$(HOST_CXX) -std=c++17 -O1 -g -fsanitize=address,undefined -idirafter $(TOOLCHAIN)/include $< -o $@
+.PHONY: test-worker-entry
+test: test-worker-entry
+test-worker-entry: build/test_worker_entry
+	./build/test_worker_entry
+
 build/test_network_ps4: tests/test_network_ps4.cpp src/network_ps4.cpp src/network_ps4.h build/trusted_roots.h
 	$(HOST_CXX) -std=c++17 -O1 -g -fsanitize=address,undefined -idirafter $(TOOLCHAIN)/include $< -lpthread -o $@
 .PHONY: test-network

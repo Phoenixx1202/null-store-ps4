@@ -26,6 +26,6 @@ with tempfile.TemporaryDirectory(dir=root / 'build') as scratch:
         shutil.copyfile(root / source, target)
     builder.ROOT = stage
     builder.CID = 'IV0000-NULL00003_00-NULLSTOREWORKER0'
-    builder.sfo(title='NULL_store Download Worker', title_id='NULL00003', category='gdd')
+    builder.sfo(title='NULL_store Download Worker (manage in Downloads)', title_id='NULL00003', category='gdd')
     builder.gp4()
     builder.build_package(stage / 'pkg.gp4', root / 'build', tool)

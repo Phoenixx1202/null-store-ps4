@@ -1,8 +1,6 @@
 #include "sources_server.h"
 #include "sources.h"
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
+#include "net_compat.h"
 #ifdef __ORBIS__
 #include <orbis/NetCtl.h>
 #else
@@ -239,13 +237,16 @@ bool SourcesServer::start(int port, std::string& error) {
     if (running) return true;
     listenFd = socket(AF_INET, SOCK_STREAM, 0);
     if (listenFd < 0) { error = "could not create the setup socket"; return false; }
+    if (listenFd >= FD_SETSIZE) {
+        close(listenFd);
+        listenFd = -1;
+        error = "No usable socket descriptor for phone setup.";
+        return false;
+    }
     int yes = 1;
     setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes);
     sockaddr_in address;
-    memset(&address, 0, sizeof address);
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = htonl(INADDR_ANY);
-    address.sin_port = htons((unsigned short)port);
+    portalAddress4(&address, htonl(INADDR_ANY), static_cast<uint16_t>(port));
     if (bind(listenFd, (sockaddr*)&address, sizeof address) != 0) {
         error = "port " + std::to_string(port) + " is already in use";
         close(listenFd);
@@ -267,6 +268,7 @@ bool SourcesServer::start(int port, std::string& error) {
         running = false;
         close(listenFd);
         listenFd = -1;
+        boundPort = 0;
         error = "could not start the setup thread";
         return false;
     }
@@ -280,6 +282,7 @@ void SourcesServer::stop() {
     pthread_join(thread, 0);
     if (listenFd >= 0) close(listenFd);
     listenFd = -1;
+    boundPort = 0;
 }
 
 void* SourcesServer::entry(void* self) {

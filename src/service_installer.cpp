@@ -20,15 +20,16 @@
 
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static bool busy = false;
-static std::string result = "Press X to install or start the optional service.";
+static std::string result = "Press X to install the worker or start an installed worker.";
 
 static void* install(void*)
 {
     std::string error;
-    bool ok = portalStartPackagedWorker(error);
+    bool installed = false, started = false;
     const auto backend = ps4InstallBackend();
-    if (!ok && !portalWorkerRunning() && backend.checkWorker() == WorkerInstallState::Missing) {
+    if (!portalWorkerRunning() && backend.checkWorker() == WorkerInstallState::Missing) {
         PackageInstaller installer(nullStoreDataRoot(), backend);
+        error = "Could not open the worker installer.";
         if (installer.start()) {
             installer.scan(0, "");
             uint64_t version = 0;
@@ -43,7 +44,7 @@ static void* install(void*)
                     if (!files.empty()) {
                         const auto& pkg = files.front();
                         if (pkg.state == InstallState::Error) { error = pkg.note; break; }
-                        if (pkg.state == InstallState::Complete) { ok = portalStartPackagedWorker(error); break; }
+                        if (pkg.state == InstallState::Complete) { installed = true; break; }
                         if (pkg.state == InstallState::Ready && !submitted && !portalWorkerRunning()) {
                             installer.submit(pkg.path);
                             submitted = true;
@@ -53,9 +54,12 @@ static void* install(void*)
                 sceKernelUsleep(100000);
             }
         }
+    } else {
+        started = portalStartPackagedWorker(error);
     }
     pthread_mutex_lock(&mutex);
-    result = ok ? "Service connected. You can close this setup app and use NULL_store." : error;
+    result = installed ? "Worker installed. Press X again to start it." :
+        started ? "Service connected. You can close this setup app and use NULL_store." : error;
     busy = false;
     pthread_mutex_unlock(&mutex);
     return nullptr;
@@ -73,8 +77,7 @@ static void draw(ns::Renderer& renderer, const ns::Texture& logo, const std::str
     renderer.text("NULL_store", kSafeX + 80, ui::baseline(renderer, 104, 36), 36, kText);
 
     renderer.text("Background service setup", kSafeX, 300, 64, kText);
-    renderer.textLines("NULL_store downloads work without this service while the app is open. Install the service "
-                       "to keep downloads running after closing NULL_store.",
+    renderer.textLines("Install the optional worker to continue downloads after closing NULL_store.",
                        kSafeX, 380, 32, kMuted, 1500, 3);
 
     const Rect status(kSafeX, 560, kContentW, 190);

@@ -59,7 +59,12 @@ if(!compatible)error="Background service version is incompatible. Stop it before
 #ifndef PORTAL_HOST
     if(!ok)verifiedPid=0;
 #endif
-    pthread_mutex_lock(&mutex);launchBusy=false;processRunning=ok;if(ok)verifiedCurrent=compatible;connected=ok&&compatible;if(!connected)queueReady=false;status=connected?"Background service connected | "+runningBuild+(runningBuild=="1.1"?" | continues after closing":" | compatible worker | continues after closing"):!lastSetupError.empty()?"Service setup failed: "+lastSetupError+" | L3 to retry":ok?error+" | L3 Service":"Background service stopped | L3 to start";pthread_mutex_unlock(&mutex);
+    pthread_mutex_lock(&mutex);launchBusy=false;processRunning=ok;if(ok)verifiedCurrent=compatible;connected=ok&&compatible;if(!connected)queueReady=false;
+    if(connected)status="Background service connected | "+runningBuild+" | continues after closing";
+    else if(ok)status=error+" | L3 Service";
+    else if(!lastSetupError.empty())status="Service setup failed: "+lastSetupError+" | L3 to retry";
+    else status="Background service stopped | L3 to start";
+    pthread_mutex_unlock(&mutex);
     if(ok&&compatible){
         for(auto&packet:pending){Writer w;w.bytes=packet;std::string why;Reader command(packet);auto op=command.u32();Game dispatchedGame;bool dispatchedDiscovery=op==DISCOVER;if(dispatchedDiscovery)dispatchedGame=game(command);bool success=call(w,reply,why);pthread_mutex_lock(&mutex);if(success&&dispatchedDiscovery&&pendingGame.id==dispatchedGame.id)sourceRequestSentGameId=dispatchedGame.id;if(!success){notice=op==ENQUEUE_FOLDER&&why=="Unsupported service command"?"Update the background service via Downloads > L3 to use this folder.":why;if(op==DISCOVER){sourceError=why;sourcesReady=true;discovering=false;}}else if(op==ENQUEUE||op==ENQUEUE_FOLDER){try{Reader r(reply);notice=r.string();}catch(...){notice="Refresh Downloads to check whether the request was accepted.";}}pthread_mutex_unlock(&mutex);}
         Writer queue;queue.u32(QUEUE);if(call(queue,reply,error)){try{Reader r(reply);auto count=r.u32();if(count>128)throw std::runtime_error("Service queue is too large");std::vector<DownloadRow>next;for(unsigned i=0;i<count;i++)next.push_back(row(r));r.end();pthread_mutex_lock(&mutex);jobs=next;queueReady=true;++version;pthread_mutex_unlock(&mutex);}catch(const std::exception&e){pthread_mutex_lock(&mutex);notice=e.what();pthread_mutex_unlock(&mutex);}}

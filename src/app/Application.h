@@ -57,6 +57,7 @@ private:
     std::unique_ptr<SourcesServer> setup_;
 
     bool downloadsReady_ = false;
+    bool catalogueRefreshStarted_ = false;
     std::shared_ptr<const SourceTable> displayedSources_;
     bool resumeAttempted_ = false;
     uint64_t workerStopDeadline_ = 0, nextWorkerCheck_ = 0;

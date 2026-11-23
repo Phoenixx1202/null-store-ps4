@@ -94,7 +94,7 @@ STORE_SRC := src/sources_server.cpp src/qrcodegen.c src/main.cpp $(wildcard src/
 # Shared with the service daemon and the setup application.
 ENGINE_SRC := src/download_manager.cpp src/debrid.cpp src/service_protocol.cpp
 SETUP_SRC := src/service_installer.cpp src/installer.cpp src/installer_ps4.cpp src/packaged_worker_launch.cpp src/service_protocol.cpp src/network_ps4.cpp
-DAEMON_SRC := src/service_main.cpp src/service_server.cpp src/network_ps4.cpp src/service_log.cpp
+DAEMON_SRC := src/worker_entry.cpp src/service_main.cpp src/service_server.cpp src/network_ps4.cpp src/service_log.cpp
 # The PlayStation Store DNS-bypass client (src/network_bypass.cpp) and its
 # vendored transport: BearSSL TLS and the net/Socket helpers, from
 # third_party/ (see third_party/net/upstream.json and BUILDING.md).
