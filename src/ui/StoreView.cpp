@@ -259,10 +259,10 @@ void StoreView::drawGrid(StoreState& s)
     const std::string key = std::to_string(s.tab) + '/' + std::to_string(s.sort) + '/' +
                             std::to_string(s.sourceFilter) + '/' + std::to_string(count) + '/' + s.query;
     const bool sameList = key == gridKey_;
-    if (row < gridTopRow_) gridTopRow_ = row;
-    if (row > gridTopRow_ + kGridRows - 1) gridTopRow_ = row - (kGridRows - 1);
-    gridTopRow_ = std::max(0, std::min(gridTopRow_, std::max(0, rows - kGridRows)));
-    if (sameList) {
+    const int pageTop = (row / kGridRows) * kGridRows;
+    const bool samePage = gridTopRow_ == pageTop;
+    gridTopRow_ = pageTop;
+    if (sameList && samePage) {
         gridScroll_.set(static_cast<float>(gridTopRow_));
     } else {
         gridKey_ = key;
@@ -427,7 +427,9 @@ void StoreView::drawCatalogueHints(StoreState& s)
 {
     float x = kSafeX;
     if (!s.visible.empty()) {
-        x += r_.text(std::to_string(s.selected + 1) + " / " + std::to_string(s.visible.size()), x,
+        const auto pages = (s.visible.size() + StoreState::kGridPage - 1) / StoreState::kGridPage;
+        const auto page = s.selected / StoreState::kGridPage + 1;
+        x += r_.text(std::string(tr("Page")) + " " + std::to_string(page) + " / " + std::to_string(pages), x,
                      ui::baseline(r_, kHintCenter, kFontLabel), kFontLabel, kMuted) +
              32.0f;
     }

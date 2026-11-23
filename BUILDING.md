@@ -38,12 +38,9 @@ The preview does not exercise Piglet itself: test on a PS4 before releasing.
 
 ## Assets and package build
 
-Generated packages, console runtime modules, cover images and the generated cover archive are not included in the source tree. The package targets require additional assets, including:
+The repository includes the catalogue snapshot and thumbnail pack for the three built-in sources. To override or add a thumbnail, put a JPEG named after the numeric listing ID in `assets/covers/` and run `make assets/covers.pack`.
 
-- `sce_module/libc.prx` and `sce_module/libSceFios2.prx`. The Makefile copies them from the toolchain's `samples/piglet/sce_module` when they are missing.
-- Optional original JPEG covers can be packed with `make assets/covers.pack`. The console caches artwork from configured sources.
-
-After supplying these inputs, run `make` for the store and `make service-package` for the setup app. The Makefile also generates the service executable and package metadata.
+The Makefile copies `libc.prx` and `libSceFios2.prx` from the toolchain's `samples/piglet/sce_module` directory. Run `make` for the store or `make service-package` for the optional setup app.
 
 `make worker-package` builds the standalone worker. Both the store and the optional setup app embed that package. `make test-package` also copies the store build to `build/NULL_store-test.pkg`.
 

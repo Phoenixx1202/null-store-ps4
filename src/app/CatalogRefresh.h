@@ -12,8 +12,7 @@
 // Background refresh of the catalogue.
 //
 // A worker thread re-reads the listing pages of the catalogue sources, saves
-// them per provider under the data folder and then caches cover art that is
-// not in the package. The main loop polls for the status line and for a new
+// them per provider under the data folder. The main loop polls for the status line and for a new
 // catalogue to show.
 // -----------------------------------------------------------------------------
 namespace ns {
@@ -38,7 +37,6 @@ private:
     void run();
     void setStatus(const std::string& text);
     void publish(const std::vector<Game>& games, bool persist = true);
-    void cacheCovers(const std::vector<Game>& games, int chosen, const SourceTable& sources);
 
     std::string data_;
     pthread_mutex_t lock_ = PTHREAD_MUTEX_INITIALIZER;

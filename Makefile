@@ -208,10 +208,10 @@ sce_sys/param.sfo: tools/package.py
 
 assets/covers.idx: assets/covers.pack
 	@test -f $@ || $(PYTHON) tools/pack_covers.py
-assets/covers.pack: tools/pack_covers.py $(wildcard assets/covers/*.jpg)
+assets/covers.pack: resources/catalog/covers.pack resources/catalog/covers.idx tools/pack_covers.py $(wildcard assets/covers/*.jpg)
 	$(PYTHON) tools/pack_covers.py
 
-pkg.gp4: $(ICONS) $(SERVICE_NOTICES) $(RUNTIME_MODULES) assets/covers.pack assets/covers.idx \
+pkg.gp4: assets/catalog.tsv $(ICONS) $(SERVICE_NOTICES) $(RUNTIME_MODULES) assets/covers.pack assets/covers.idx \
          assets/brand/nullstore-bag.png $(WORKER_PAYLOAD) eboot.bin \
          sce_sys/param.sfo tools/package.py assets/font.ttf $(wildcard assets/covers/*.jpg)
 	$(PYTHON) tools/package.py gp4

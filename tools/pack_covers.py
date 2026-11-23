@@ -1,13 +1,32 @@
 #!/usr/bin/env python3
-"""Pack bundled JPEGs into two files to avoid large-file-count PFS builder issues."""
+"""Build the cover archive from the bundled thumbnails and optional local JPEGs."""
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[1]
-assets=ROOT/'assets'
-rows=[]
-with (assets/'covers.pack.tmp').open('wb') as out:
-    for path in sorted((assets/'covers').glob('*.jpg')):
-        if not path.stem.isdigit():continue
-        data=path.read_bytes();rows.append(f'{path.stem}\t{out.tell()}\t{len(data)}\n');out.write(data)
-(assets/'covers.pack.tmp').replace(assets/'covers.pack')
-(assets/'covers.idx.tmp').write_text(''.join(rows));(assets/'covers.idx.tmp').replace(assets/'covers.idx')
-print(f'Packed {len(rows)} original covers; {(assets/"covers.pack").stat().st_size:,} bytes.')
+
+root = Path(__file__).resolve().parents[1]
+assets = root / 'assets'
+bundled = root / 'resources' / 'catalog'
+extras = {int(path.stem): path for path in (assets / 'covers').glob('*.jpg') if path.stem.isdigit()}
+rows = []
+with (bundled / 'covers.pack').open('rb') as original, (assets / 'covers.pack.tmp').open('wb') as output:
+    def append(game, data):
+        if not data:
+            raise ValueError(f'Empty cover for game {game}')
+        rows.append(f'{game}\t{output.tell()}\t{len(data)}\n')
+        output.write(data)
+
+    for line in (bundled / 'covers.idx').read_text().splitlines():
+        game, offset, length = map(int, line.split())
+        if game in extras:
+            append(game, extras.pop(game).read_bytes())
+        else:
+            original.seek(offset)
+            data = original.read(length)
+            if len(data) != length:
+                raise ValueError(f'Truncated bundled cover for game {game}')
+            append(game, data)
+    for game, path in sorted(extras.items()):
+        append(game, path.read_bytes())
+(assets / 'covers.idx.tmp').write_text(''.join(rows))
+(assets / 'covers.pack.tmp').replace(assets / 'covers.pack')
+(assets / 'covers.idx.tmp').replace(assets / 'covers.idx')
+print(f'Packed {len(rows)} covers.')

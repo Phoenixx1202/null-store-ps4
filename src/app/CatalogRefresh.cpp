@@ -1,6 +1,6 @@
 #include "app/CatalogRefresh.h"
 
-#include <sys/stat.h>
+#include <unordered_map>
 
 #include <orbis/libkernel.h>
 
@@ -8,26 +8,14 @@
 #include "providers.h"
 #include "sources.h"
 
-// Implemented in src/graphics/Image.cpp (the program's stb_image instance).
-extern "C" int stbi_info_from_memory(const unsigned char* buffer, int length, int* x, int* y, int* components);
-
 namespace ns {
 
 namespace {
 
 
-const char* const kBundledCoverIndex = "/app0/assets/covers.idx";
-
-
 bool fetchPage(const std::string& url, std::string& out)
 {
     return sourceURL(url) && portalNetworkFetch(url, out, 4 * 1024 * 1024, "");
-}
-
-bool fileExists(const std::string& path)
-{
-    struct stat info;
-    return stat(path.c_str(), &info) == 0;
 }
 
 } // namespace
@@ -53,7 +41,7 @@ void CatalogRefresh::setStatus(const std::string& text)
 
 void CatalogRefresh::publish(const std::vector<Game>& games, bool persist)
 {
-    if (persist) writeFile(data_ + "/catalog.tsv", serialize(games));
+    if (persist && !games.empty()) writeFile(data_ + "/catalog.tsv", serialize(games));
     pthread_mutex_lock(&lock_);
     refreshed_ = games;
     ready_ = true;
@@ -131,7 +119,7 @@ void* CatalogRefresh::entry(void* self)
 void CatalogRefresh::run()
 {
     const auto sources = sourceSnapshot();
-    std::vector<Game> next = mergedCatalog(data_ + "/catalog.tsv", *sources);
+    std::vector<Game> next = mergedCatalog(data_ + "/catalog.tsv", *sources, "/app0/assets/catalog.tsv");
     int updated = 0, cached = 0, unavailable = 0;
     pthread_mutex_lock(&lock_);
     const int chosen = source_;
@@ -159,6 +147,10 @@ void CatalogRefresh::run()
         bool ok = true;
         std::vector<Game> part;
         std::set<int> ids;
+        std::unordered_map<int, const Game*> old;
+        for (const auto& game : next) old.emplace(game.id, &game);
+        const bool needsPreview = std::none_of(next.begin(), next.end(),
+            [&](const Game& game) { return sources->owns(source, game.url); });
         for (int page = 1; page <= pages; page++) {
             if (interrupted_ || sources != sourceSnapshot()) return;
             setStatus(std::string("Refreshing ") + sources->label(source) + " " + std::to_string(page) + "/" +
@@ -182,17 +174,15 @@ void CatalogRefresh::run()
                     continue;
                 }
                 // Keep what an earlier refresh knew and this listing omits.
-                for (const Game& old : next) {
-                    if (old.id == game.id) {
-                        if (game.image.empty()) game.image = old.image;
-                        if (game.year.empty()) game.year = old.year;
-                        break;
-                    }
+                const auto found = old.find(game.id);
+                if (found != old.end()) {
+                    if (game.image.empty()) game.image = found->second->image;
+                    if (game.year.empty()) game.year = found->second->year;
+                    if (game.size.empty()) game.size = found->second->size;
                 }
                 part.push_back(game);
             }
-            if (page == 1 && !part.empty() && std::none_of(next.begin(), next.end(),
-                    [&](const Game& g) { return sources->owns(source, g.url); })) {
+            if (needsPreview && !part.empty() && (page <= 2 || page % 8 == 0)) {
                 auto preview = next;
                 preview.insert(preview.end(), part.begin(), part.end());
                 publish(preview, false);
@@ -201,73 +191,26 @@ void CatalogRefresh::run()
             sceKernelUsleep(350000);
         }
         if (interrupted_ || sources != sourceSnapshot()) return;
-        if (ok && saveProviderCache(data_, source, part, true, time(nullptr), *sources)) {
-            next.erase(std::remove_if(next.begin(), next.end(),
-                                      [&](const Game& game) { return sources->indexForURL(game.url) == source; }),
-                       next.end());
-            next.insert(next.end(), part.begin(), part.end());
-            updated++;
-            publish(next);
-        } else {
-            unavailable++;
+        if (part.empty()) {
+            ++unavailable;
+            continue;
         }
+        // Retain previous listings if the source stopped early or its pagination changed.
+        for (const auto& game : next)
+            if (sources->owns(source, game.url) && ids.insert(game.id).second) part.push_back(game);
+        const bool saved = saveProviderCache(data_, source, part, ok, time(nullptr), *sources);
+        if (ok && saved) ++updated;
+        else ++unavailable;
+        next.erase(std::remove_if(next.begin(), next.end(),
+                                  [&](const Game& game) { return sources->owns(source, game.url); }), next.end());
+        next.insert(next.end(), part.begin(), part.end());
+        if (interrupted_ || sources != sourceSnapshot()) return;
+        publish(next);
     }
 
     if (interrupted_ || sources != sourceSnapshot()) return;
-    publish(mergedCatalog(data_ + "/catalog.tsv", *sources));
-    if (updated && sources == sourceSnapshot()) {
-        cacheCovers(next, chosen, *sources);
-    }
-
     setStatus(std::to_string(updated) + " updated / " + std::to_string(cached) + " cached / " +
               std::to_string(unavailable) + " unavailable | Saved catalogues retained");
-}
-
-// Downloads the cover of every game that has none in the package or on disk.
-void CatalogRefresh::cacheCovers(const std::vector<Game>& games, int chosen, const SourceTable& sources)
-{
-    std::set<int> packaged;
-    const std::string index = readFile(kBundledCoverIndex);
-    for (size_t p = 0; p < index.size();) {
-        packaged.insert(atoi(index.c_str() + p));
-        const auto end = index.find('\n', p);
-        if (end == std::string::npos) {
-            break;
-        }
-        p = end + 1;
-    }
-
-    int artwork = 0;
-    for (const Game& game : games) {
-        if (interrupted_ || &sources != sourceSnapshot().get()) return;
-        const int source = sources.indexForURL(game.url);
-        if (!source || (chosen && source != chosen)) {
-            continue;
-        }
-        const std::string folder = providerCoverPath(data_, source, sources);
-        mkdir(folder.c_str(), 0777);
-        const std::string filename = std::to_string(game.id) + ".jpg";
-        if (packaged.count(game.id) || fileExists(folder + "/" + filename) ||
-            fileExists(data_ + "/covers/" + filename)) {
-            continue;
-        }
-
-        std::string bytes;
-        if (sourceURL(game.image) && portalNetworkFetch(game.image, bytes, 3 * 1024 * 1024, "")) {
-            int w = 0, h = 0, components = 0;
-            if (stbi_info_from_memory(reinterpret_cast<const unsigned char*>(bytes.data()),
-                                      static_cast<int>(bytes.size()), &w, &h, &components) &&
-                w <= 2048 && h <= 2048) {
-                writeFile(folder + "/" + filename, bytes);
-            }
-        }
-        sceKernelUsleep(200000);
-        if (++artwork % 20 == 0) {
-            setStatus("Caching provider cover art | Catalogue ready to browse");
-        }
-    }
-
-
 }
 
 } // namespace ns

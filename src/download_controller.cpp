@@ -31,7 +31,33 @@ bool DownloadController::enqueue(const Game&g,const TorrentLink&l,std::string&wh
     }
     bool ok=ensureLocalLocked(true)&&local->enqueue(g,l,why);pthread_mutex_unlock(&mutex);return ok;
 }
-void DownloadController::toggle(int id){pthread_mutex_lock(&mutex);if(local)local->toggle(id);else remote.toggle(id);pthread_mutex_unlock(&mutex);}
+void DownloadController::toggle(int id) {
+    pthread_mutex_lock(&mutex);
+    bool prepare = false;
+    if (!local && remote.isConnected()) {
+        for (const auto& row : visibleJobs) {
+            if (row.id != id || row.state != DownloadState::Failed) continue;
+            const bool needsMetadata = row.error.find("Could not fetch a torrent file") == 0 ||
+                row.error.find("Could not reach the torrent source") == 0 ||
+                row.error.find("The source returned an invalid torrent") == 0;
+            if (!needsMetadata || (!sourceURL(row.url) && !isDiagnosticTorrent(row.url))) break;
+            Game game;
+            game.id = row.gameId;
+            game.url = row.page;
+            game.title = row.title;
+            if (std::none_of(pendingEnqueues.begin(), pendingEnqueues.end(),
+                             [&](const PendingEnqueue& item) { return item.link.url == row.url; }))
+                pendingEnqueues.push_back({game, {row.title, row.url}});
+            prepare = true;
+            break;
+        }
+    }
+    if (!prepare) {
+        if (local) local->toggle(id);
+        else remote.toggle(id);
+    }
+    pthread_mutex_unlock(&mutex);
+}
 void DownloadController::cancel(int id){pthread_mutex_lock(&mutex);if(local)local->cancel(id);else remote.cancel(id);pthread_mutex_unlock(&mutex);}
 void DownloadController::remove(int id,bool deleteFiles){pthread_mutex_lock(&mutex);if(local)local->remove(id,deleteFiles);else remote.remove(id,deleteFiles);pthread_mutex_unlock(&mutex);}
 bool DownloadController::snapshot(uint64_t&stamp,std::vector<DownloadRow>&out){pthread_mutex_lock(&mutex);std::vector<DownloadRow>next;bool changed=local?local->snapshot(localVersion,next):remote.snapshot(remoteVersion,next);if(changed){visibleJobs.swap(next);++version;}bool result=changed||stamp!=version;if(result)out=visibleJobs;stamp=version;pthread_mutex_unlock(&mutex);return result;}

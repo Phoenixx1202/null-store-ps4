@@ -5,6 +5,34 @@ using namespace ns;
 #include <iostream>
 #include <sys/stat.h>
 int main(){
+    {
+        replaceSources(builtInSources());
+        char dir[] = "/tmp/null-store-catalog-XXXXXX";
+        assert(mkdtemp(dir));
+        auto bundled = loadCatalog(readFile("assets/catalog.tsv"));
+        assert(bundled.size() > 24);
+        std::vector<Game> first(bundled.begin(), bundled.begin() + 15);
+        assert(saveProviderCache(dir, sourceForURL(first.front().url), first));
+        StoreState offline("assets", dir);
+        assert(offline.games.size() == bundled.size());
+        int pairs = 0, triples = 0;
+        for (const auto& group : offline.groups) {
+            if (group.size() == 2) ++pairs;
+            if (group.size() == 3) ++triples;
+        }
+        assert(pairs && triples);
+        std::cout << bundled.size() << " offline listings, " << offline.groups.size() << " tiles, "
+                  << pairs << " two-listing tiles, " << triples << " three-listing tiles.\n";
+        offline.action(PAGE_NEXT);
+        assert(offline.selected == StoreState::kGridPage);
+        offline.selected = int(offline.visible.size()) - 1;
+        offline.action(PAGE_NEXT);
+        assert(offline.selected == int(offline.visible.size()) - 1);
+        const auto cache = providerCachePath(dir, sourceForURL(first.front().url));
+        unlink((cache + ".time").c_str());
+        unlink(cache.c_str());
+        rmdir(dir);
+    }
     replaceSources({});
     registerTestSource("one", "https://one.example.org");
     registerTestSource("two", "https://two.example.org");

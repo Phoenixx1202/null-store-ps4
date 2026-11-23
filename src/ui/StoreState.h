@@ -182,7 +182,7 @@ struct StoreState {
         }
         separateListings = readFile(data + "/catalog-display.txt") == "separate";
         loadSettings();
-        games = mergedCatalog(data + "/catalog.tsv");
+        games = mergedCatalog(data + "/catalog.tsv", *sourceSnapshot(), base + "/catalog.tsv");
         shareTitleIds();
 
         const std::string saved = readFile(data + "/favorites.txt");
@@ -429,34 +429,38 @@ struct StoreState {
     // `follow`: the game under the cursor stays under it, wherever its tile
     // moves (when the list is regrouped in the background, not when the user
     // changes the sort, the search or the source).
-    void filter(bool follow = false)
+    void filter(bool follow = false, int keepId = -1)
     {
         const auto table = sourceSnapshot();
         const Game* before = follow ? current() : nullptr;
-        const int keepId = before ? before->id : -1;
+        if (before) keepId = before->id;
 
         std::vector<int> matches;
+        std::vector<int> ranks(games.size()), sources(games.size());
+        std::vector<int> sourceCounts(table->items.size() + 1);
+        std::vector<std::string> names(sort == 1 ? games.size() : 0);
+        std::vector<double> sizes(sort == 3 ? games.size() : 0);
+        const std::string search = lower(query);
         for (size_t i = 0; i < games.size(); ++i) {
             const Game& game = games[i];
-            if ((!sourceFilter || table->indexForURL(game.url) == sourceFilter) &&
-                (tab != TAB_RECENT || atoi(game.year.c_str()) >= 2024) &&
-                lower(game.title).find(lower(query)) != std::string::npos) {
-                matches.push_back(static_cast<int>(i));
+            const int source = table->indexForURL(game.url);
+            if ((sourceFilter && sourceFilter != source) || (tab == TAB_RECENT && atoi(game.year.c_str()) < 2024))
+                continue;
+            if (sort == 1 || !search.empty()) {
+                auto name = lower(game.title);
+                if (!search.empty() && name.find(search) == std::string::npos) continue;
+                if (sort == 1) names[i] = std::move(name);
             }
-        }
-        // "Recently added" interleaves the sources: each keeps its own order.
-        std::map<int, int> ranks;
-        std::map<int, int> sourceRanks;
-        for (int index : matches) {
-            ranks[index] = sourceRanks[table->indexForURL(games[index].url)]++;
+            if (sort == 3) sizes[i] = sizeMB(game.size);
+            sources[i] = source;
+            ranks[i] = sourceCounts[source]++;
+            matches.push_back(static_cast<int>(i));
         }
         std::stable_sort(matches.begin(), matches.end(), [&](int a, int b) {
-            const Game& x = games[a];
-            const Game& y = games[b];
-            if (sort == 1) return lower(x.title) < lower(y.title);
-            if (sort == 2) return x.year > y.year;
-            if (sort == 3) return sizeMB(x.size) < sizeMB(y.size);
-            return ranks[a] != ranks[b] ? ranks[a] < ranks[b] : table->indexForURL(x.url) < table->indexForURL(y.url);
+            if (sort == 1) return names[a] < names[b];
+            if (sort == 2) return games[a].year > games[b].year;
+            if (sort == 3) return sizes[a] < sizes[b];
+            return ranks[a] != ranks[b] ? ranks[a] < ranks[b] : sources[a] < sources[b];
         });
 
         // A game takes the place of its first entry in that order.
@@ -891,8 +895,8 @@ struct StoreState {
         if (a == RIGHT) selected = std::min(count - 1, selected + 1);
         if (a == UP) selected = std::max(0, selected - kGridColumns);
         if (a == DOWN) selected = std::min(count - 1, selected + kGridColumns);
-        if (a == PAGE_PREV) selected = std::max(0, selected - kGridPage);
-        if (a == PAGE_NEXT) selected = std::min(count - 1, selected + kGridPage);
+        if (a == PAGE_PREV && selected >= kGridPage) selected -= kGridPage;
+        if (a == PAGE_NEXT && selected / kGridPage < (count - 1) / kGridPage) selected = std::min(count - 1, selected + kGridPage);
         if (a == CONFIRM) {
             detail = true;
             variantSelected = 0;

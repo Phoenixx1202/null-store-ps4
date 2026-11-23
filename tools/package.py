@@ -54,7 +54,7 @@ def gp4():
         paths.extend(p for p in (ROOT/folder).rglob('*') if p.is_file() and not p.name.startswith('.') and p.suffix not in ('.json',) and p.parent!=ROOT/'assets/covers' and p.name not in ('store-icon.png','service-icon.png','COMPAT-PROVENANCE.txt'))
     excluded = {"assets/service/eboot.bin", "assets/service/daemon.sfo", "assets/service/compat-jb.prx"}
     paths = [p for p in paths if p.relative_to(ROOT).as_posix() not in excluded and
-             not p.relative_to(ROOT).as_posix().startswith(("assets/service/sce_module/", "assets/catalog"))]
+             not p.relative_to(ROOT).as_posix().startswith("assets/service/sce_module/")]
     for p in paths:
         name=p.relative_to(ROOT).as_posix()
         if p.name=='param.sfo' and name!='sce_sys/param.sfo':

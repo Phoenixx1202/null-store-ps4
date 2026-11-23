@@ -453,7 +453,7 @@ void Application::syncWorkers()
             }
         }
         displayedSources_ = table;
-        ui.games = mergedCatalog(data_ + "/catalog.tsv");
+        ui.games = mergedCatalog(data_ + "/catalog.tsv", *sourceSnapshot(), std::string(kAssets) + "/catalog.tsv");
         ui.shareTitleIds();
         ui.filter();
         sizeAttempts_.clear();
@@ -509,6 +509,10 @@ void Application::syncWorkers()
     covers_->pollNames(ui.officialNames);
 
     refresh_->pollStatus(ui.status);
+    const Game* selected = ui.current();
+    const int selectedId = selected ? selected->id : -1;
+    const Game* variant = ui.detail ? ui.variant() : nullptr;
+    const int variantId = variant ? variant->id : -1;
     const bool refreshed = refresh_->pollCatalogue(ui.games);
     // Title IDs learnt in the background regroup the catalogue the next time
     // the list is rebuilt (search, sort, tab...): applying them now would move
@@ -516,10 +520,18 @@ void Application::syncWorkers()
     if (learnt || refreshed) {
         ui.shareTitleIds();
     }
-    updateDetails(refreshed);
     if (refreshed) {
-        ui.filter();
+        ui.filter(false, variantId > 0 ? variantId : selectedId);
+        if (ui.detail) {
+            const auto* group = ui.currentGroup();
+            ui.variantSelected = 0;
+            if (group) {
+                for (size_t i = 0; i < group->size(); ++i)
+                    if (ui.games[(*group)[i]].id == variantId) ui.variantSelected = static_cast<int>(i);
+            }
+        }
     }
+    updateDetails(refreshed);
 }
 
 void Application::updateDetails(bool refreshed)

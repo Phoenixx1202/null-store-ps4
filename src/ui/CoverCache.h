@@ -76,6 +76,8 @@ private:
         State state = State::Loading;
         Cover cover;
         uint64_t lastUsedFrame = 0;
+        bool upgrading = false;
+        double retryAt = 0;
         double missingSince = 0.0;
     };
 
@@ -86,6 +88,8 @@ private:
         std::string imageUrl;           // the source's cover
         std::string savePath;           // where a downloaded source cover is kept
         std::vector<std::string> paths; // where the source cover may already be
+        bool triedSource = false;
+        bool fetchSourceFirst = false;
         bool networkDone = false;       // everything that can be fetched has been tried
         int generation = 0;             // the setting it was asked under (setOfficialArt)
     };
@@ -93,6 +97,8 @@ private:
     struct Result {
         int id = 0;
         int generation = 0;
+        bool provisional = false;
+        bool retryOfficial = false;
         Image image;
         std::string titleId; // with `name`: the official name of the tile's title
         std::string name;

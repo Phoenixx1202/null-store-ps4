@@ -42,13 +42,23 @@ def verify(folder,catalog=False):
     required = ['assets/worker/download-worker.pkg', 'assets/worker/build-id.txt',
                 'assets/service/cacert.pem', 'sce_module/libc.prx', 'sce_module/libSceFios2.prx']
     if catalog:
-        required.extend(['eboot.bin', 'assets/covers.pack', 'assets/covers.idx',
+        required.extend(['eboot.bin', 'assets/catalog.tsv', 'assets/covers.pack', 'assets/covers.idx',
                          'assets/font.ttf', 'assets/font-fallback.ttf'])
     for name in required:
         actual, expected = folder / name, ROOT / name
         if not actual.is_file() or hashlib.sha256(actual.read_bytes()).digest() != hashlib.sha256(expected.read_bytes()).digest():
             raise RuntimeError(f'Package payload mismatch: {name}')
     if catalog:
+        rows = (folder / 'assets/catalog.tsv').read_text().splitlines()
+        index = (folder / 'assets/covers.idx').read_text().splitlines()
+        size = (folder / 'assets/covers.pack').stat().st_size
+        if len(rows) <= 24 or not index or not size:
+            raise RuntimeError('Missing bundled catalogue or cover art')
+        for row in index:
+            _, offset, length = map(int, row.split())
+            if offset < 0 or length <= 0 or offset + length > size:
+                raise RuntimeError('Invalid cover pack index')
+        print(f'Bundled catalogue verified: {len(rows)} listings and {len(index)} covers.')
         verify_installer_self((folder / 'eboot.bin').read_bytes())
     print('Bundled download worker, build ID and runtime files verified.')
 def main():

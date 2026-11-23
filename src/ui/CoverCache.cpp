@@ -1,6 +1,7 @@
 #include "ui/CoverCache.h"
 
 #include <cstdio>
+#include <chrono>
 #include <cstring>
 
 #include "core/Log.h"
@@ -19,8 +20,6 @@
 
 #include <orbis/libkernel.h>
 
-// Implemented in src/graphics/Image.cpp (the program's stb_image instance).
-extern "C" int stbi_info_from_memory(const unsigned char* buffer, int length, int* x, int* y, int* components);
 #endif
 
 namespace ns {
@@ -188,6 +187,7 @@ struct CoverCache::Shared {
     pthread_t downloadThreads[kDownloadWorkers];
     bool decoding = false;
     int downloaders = 0;
+    std::chrono::steady_clock::time_point retryArtworkSite{};
     bool quitting = false;
 #endif
     // The workers take what the screens asked for most recently first, and
@@ -437,8 +437,7 @@ bool CoverCache::pollTitleIds(std::map<int, std::string>& ids)
     return any;
 }
 
-// Builds the tile from what is on the console. Returns true, without a tile,
-// when something still has to be fetched first and `network` allows it.
+// A local tile can be displayed while the network workers look for its official artwork.
 bool CoverCache::resolve(const Request& request, Result& result) const
 {
     result.id = request.id;
@@ -449,12 +448,10 @@ bool CoverCache::resolve(const Request& request, Result& result) const
     const std::string titleId = useOfficial ? titleIdOf(request) : std::string(kNoTitleId);
     const bool network = fetch_ != nullptr && !request.networkDone;
     Image picture;
+    bool needsOfficial = titleId.empty() && !request.pageUrl.empty();
 
     if (isTitleId(titleId)) {
         const std::string folder = official::folder(artRoot_, titleId);
-        if (network && !nameKnown(folder)) {
-            return true; // the title's name has not been looked up yet
-        }
         const std::string name = keptName(folder);
         if (!name.empty()) {
             result.titleId = titleId;
@@ -462,13 +459,9 @@ bool CoverCache::resolve(const Request& request, Result& result) const
         }
         if (picture.load(folder + "/icon0.webp", kMaxDimension)) {
             result.image = tile(picture, false);
-            return false;
+            return network && !nameKnown(folder);
         }
-        if (network && !knownWithoutIcon(folder)) {
-            return true; // the title's page has not been read yet
-        }
-    } else if (titleId.empty() && network && !request.pageUrl.empty()) {
-        return true; // the title ID is still to be read from the game's page
+        needsOfficial = !knownWithoutIcon(folder);
     }
 
     // No official icon: the cover of the source.
@@ -491,11 +484,9 @@ bool CoverCache::resolve(const Request& request, Result& result) const
             }
         }
     }
-    if (picture.empty() && network && !request.imageUrl.empty()) {
-        return true;
-    }
     result.image = tile(picture, true);
-    return false;
+    result.retryOfficial = needsOfficial && fetch_ != nullptr;
+    return network && (needsOfficial || (picture.empty() && !request.triedSource && !request.imageUrl.empty()));
 }
 
 // Fetches whatever the game's tile still lacks, in order: its title ID, the
@@ -503,6 +494,17 @@ bool CoverCache::resolve(const Request& request, Result& result) const
 void CoverCache::fetchAll(const Request& request) const
 {
 #ifndef NS_HOST
+    if (request.fetchSourceFirst) {
+        std::string bytes;
+        Image check;
+        if (sourceURL(request.imageUrl) && fetch_(request.imageUrl, bytes, kMaxFileBytes, request.pageUrl) &&
+            check.decode(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), kMaxSourceDimension)) {
+            const auto slash = request.savePath.find_last_of('/');
+            if (slash != std::string::npos) mkdir(request.savePath.substr(0, slash).c_str(), 0777);
+            writeFile(request.savePath, bytes);
+        }
+        return;
+    }
     shared_->lock();
     const bool useOfficial = shared_->official;
     shared_->unlock();
@@ -519,14 +521,19 @@ void CoverCache::fetchAll(const Request& request) const
     if (isTitleId(titleId)) {
         const std::string folder = official::folder(artRoot_, titleId);
         mkdir(folder.c_str(), 0777);
-        haveIcon = official::fileExists(folder + "/icon0.webp");
+        Image cachedIcon;
+        haveIcon = cachedIcon.load(folder + "/icon0.webp", kMaxDimension);
         const bool wantIcon = !haveIcon && !knownWithoutIcon(folder);
         const bool wantName = !nameKnown(folder);
         std::string name;
         bool siteNamedNone = false; // the site's page was read and names no icon
         if (wantIcon || wantName) {
             std::string page;
-            if (fetch_(std::string(official::kSite) + titleId, page, 1024 * 1024, "")) {
+            const auto started = std::chrono::steady_clock::now();
+            shared_->lock();
+            const bool available = started >= shared_->retryArtworkSite;
+            shared_->unlock();
+            if (available && fetch_(std::string(official::kSite) + titleId, page, 1024 * 1024, "")) {
                 name = official::nameFromPage(page, titleId);
                 if (hasNonLatin(name)) {
                     name.clear(); // "復活邪神2": the store may know it in Latin letters
@@ -544,6 +551,10 @@ void CoverCache::fetchAll(const Request& request) const
                 if (!background.empty() && !official::fileExists(folder + "/pic0.txt")) {
                     writeFile(folder + "/pic0.txt", background + "\n");
                 }
+            } else if (available && std::chrono::steady_clock::now() - started >= std::chrono::seconds(5)) {
+                shared_->lock();
+                shared_->retryArtworkSite = std::chrono::steady_clock::now() + std::chrono::seconds(45);
+                shared_->unlock();
             }
         }
         // What orbispatches.com does not have, the PlayStation Store may.
@@ -563,7 +574,7 @@ void CoverCache::fetchAll(const Request& request) const
                 writeFile(folder + "/pic0.txt", art.background + "\n");
             }
         }
-        if (wantName) {
+        if (wantName && (!name.empty() || storeAnswered || siteNamedNone)) {
             // Asked once: a title without a known name keeps the source's.
             writeFile(folder + "/name.txt", (name.empty() ? std::string(kNoTitleId) : cleanName(name)) + "\n");
         }
@@ -572,20 +583,6 @@ void CoverCache::fetchAll(const Request& request) const
         }
     }
 
-    if (!haveIcon && !official::fileExists(request.savePath) && sourceURL(request.imageUrl)) {
-        std::string bytes;
-        int width = 0, height = 0, components = 0;
-        if (fetch_(request.imageUrl, bytes, kMaxFileBytes, "") &&
-            stbi_info_from_memory(reinterpret_cast<const unsigned char*>(bytes.data()),
-                                  static_cast<int>(bytes.size()), &width, &height, &components) &&
-            width <= kMaxSourceDimension && height <= kMaxSourceDimension) {
-            const auto slash = request.savePath.find_last_of('/');
-            if (slash != std::string::npos) {
-                mkdir(request.savePath.substr(0, slash).c_str(), 0777);
-            }
-            writeFile(request.savePath, bytes);
-        }
-    }
 #else
     (void)request;
 #endif
@@ -625,6 +622,11 @@ void CoverCache::decodeLoop()
         pthread_mutex_lock(&shared_->mutex);
 
         if (fetchFirst) {
+            request.fetchSourceFirst = !request.triedSource && result.image.empty() && sourceURL(request.imageUrl);
+            if (!result.image.empty()) {
+                result.provisional = true;
+                shared_->done.push_back(std::move(result));
+            }
             shared_->downloads.push_back(std::move(request));
             shared_->trim(shared_->downloads, kMaxPending);
             pthread_cond_signal(&shared_->downloadWake);
@@ -654,7 +656,8 @@ void CoverCache::downloadLoop()
         pthread_mutex_lock(&shared_->mutex);
 
         // Back to the decoder, which builds the tile from what was saved.
-        request.networkDone = true;
+        request.networkDone = !request.fetchSourceFirst;
+        request.triedSource |= request.fetchSourceFirst;
         shared_->pending.push_back(std::move(request));
         pthread_cond_signal(&shared_->decodeWake);
     }
@@ -669,16 +672,15 @@ const Cover* CoverCache::get(const Game& game, const std::string& titleId, int o
         Entry& entry = found->second;
         entry.lastUsedFrame = renderer_.frame();
         if (entry.state == State::Ready) {
-            return &entry.cover;
+            if (entry.upgrading) wanted_.push_back({ game.id, order });
+            if (entry.upgrading || !entry.retryAt || now_ < entry.retryAt) return &entry.cover;
+            entry.upgrading = true;
+            entry.retryAt = 0;
+        } else {
+            if (entry.state == State::Loading) wanted_.push_back({ game.id, order });
+            if (entry.state != State::Missing || now_ - entry.missingSince < kRetrySeconds) return nullptr;
+            entry.state = State::Loading;
         }
-        if (entry.state == State::Loading) {
-            wanted_.push_back({ game.id, order }); // still on screen: keep its turn
-        }
-        // A tile that could not be had is asked for again after a while.
-        if (entry.state != State::Missing || now_ - entry.missingSince < kRetrySeconds) {
-            return nullptr;
-        }
-        entries_.erase(found);
     }
 
     Request request;
@@ -701,7 +703,7 @@ const Cover* CoverCache::get(const Game& game, const std::string& titleId, int o
         shared_->trim(shared_->pending, kMaxPending);
         pthread_cond_signal(&shared_->decodeWake);
         pthread_mutex_unlock(&shared_->mutex);
-        return nullptr;
+        return entry.state == State::Ready ? &entry.cover : nullptr;
     }
 #endif
     request.networkDone = true;
@@ -724,10 +726,12 @@ void CoverCache::finish(Result& result)
         return; // evicted while it was loading
     }
     Entry& entry = found->second;
+    entry.upgrading = result.provisional;
+    entry.retryAt = !result.provisional && result.retryOfficial ? now_ + kRetrySeconds : 0;
     if (!result.image.empty() && entry.cover.texture.create(renderer_.backend(), result.image, true)) {
         entry.cover.readyTime = now_;
         entry.state = State::Ready;
-    } else {
+    } else if (entry.state != State::Ready) {
         entry.state = State::Missing;
         entry.missingSince = now_;
     }
@@ -752,21 +756,25 @@ void CoverCache::pump(double nowSeconds)
         shared_->priority[tile.id] = Shared::Priority{ renderer_.frame(), tile.order };
     }
     for (const Result& result : ready) {
-        shared_->priority.erase(result.id);
+        if (!result.provisional) shared_->priority.erase(result.id);
     }
     for (int id : dropped) {
         shared_->priority.erase(id);
     }
     pthread_mutex_unlock(&shared_->mutex);
 
-    for (int id : dropped) {
-        const auto found = entries_.find(id);
-        if (found != entries_.end() && found->second.state == State::Loading) {
-            entries_.erase(found);
-        }
-    }
     for (Result& result : ready) {
         finish(result);
+    }
+    for (int id : dropped) {
+        const auto found = entries_.find(id);
+        if (found != entries_.end()) {
+            if (found->second.state == State::Loading) entries_.erase(found);
+            else {
+                found->second.upgrading = false;
+                found->second.retryAt = now_ + 1;
+            }
+        }
     }
 #endif
     wanted_.clear();

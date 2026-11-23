@@ -40,6 +40,20 @@ int main(){replaceSources({});registerTestSource("one","https://example.org");re
     identityMeta="d4:infod6:lengthi1e4:name1:x12:piece lengthi1e6:pieces20:aaaaaaaaaaaaaaaaaaaaee";char hash[41];assert(torrent_identity((const unsigned char*)identityMeta.data(),identityMeta.size(),hash)==0);
     std::string canonical="1\t773\tOriginal torrent\thttps://example.org/original.torrent\t3\t0\t1\t\thttps://example.org/773-test.html\t"+std::string(hash)+"\t0\n";assert(saveQueue(root+"/downloads.tsv",canonical));
     {DownloadManager m(root,duplicateFetch);Game other=g;other.id=1000000137;other.url="https://games2.example.org/category/playstation-4/137-test.html";TorrentLink duplicate={"Same torrent from another source","https://games2.example.org/duplicate.torrent"};assert(m.enqueue(other,duplicate,why));assert(m.start());for(int i=0;i<100;i++){stamp=0;m.snapshot(stamp,jobs);if(jobs.size()==1)break;delay(10);}assert(jobs.size()==1&&jobs[0].id==1&&jobs[0].state==DownloadState::Paused);struct stat st;assert(stat((root+"/downloads/2").c_str(),&st)!=0);}
+    for (bool removed : {false, true}) {
+        const std::string saved = "3\t773\tOriginal entry\t" + links[0].url + "\t5\t0\t0\tCould not fetch a torrent file.\t" +
+            g.url + "\t\t" + (removed ? "1" : "0") + "\t0\n";
+        assert(saveQueue(root + "/downloads.tsv", saved));
+        unlink((root + "/torrents/3.torrent").c_str());
+        DownloadManager restored(root, fetch);
+        assert(!restored.enqueue(g, links[0], why, "d-invalid"));
+        assert(restored.enqueue(g, links[0], why, identityMeta));
+        assert(readFile(root + "/torrents/3.torrent") == identityMeta);
+        stamp = 0;
+        assert(restored.snapshot(stamp, jobs) && jobs.size() == 1 && jobs[0].id == 3);
+        assert(jobs[0].state == DownloadState::Queued && jobs[0].error.empty());
+        assert(!restored.enqueue(g, links[0], why, identityMeta));
+    }
     std::string legacy="1\t773\tOlder queued alias\thttps://example.org/older.torrent\t0\t0\t1\t\thttps://example.org/773-test.html\t\t0\n2\t773\tExisting known torrent\thttps://games2.example.org/known.torrent\t3\t0\t1\t\thttps://games2.example.org/category/playstation-4/137-test.html\t"+std::string(hash)+"\t0\n";assert(saveQueue(root+"/downloads.tsv",legacy));
     {DownloadManager m(root,duplicateFetch);assert(m.start());for(int i=0;i<100;i++){stamp=0;m.snapshot(stamp,jobs);if(jobs.size()==1)break;delay(10);}assert(jobs.size()==1&&jobs[0].id==2&&jobs[0].state==DownloadState::Paused);struct stat st;assert(stat((root+"/downloads/1").c_str(),&st)!=0);}
     // Delete-files removes payload, metainfo and both committed/temporary resume
