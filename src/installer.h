@@ -10,12 +10,15 @@ inline std::string installStatusText(const InstallPackage& package){
     if(package.percent>0&&package.percent<100)return "Installing  "+std::to_string(package.percent)+"%";
     return "Installing";
 }
+enum class WorkerInstallState { Unchecked, Unknown, Missing, Current, Different, Installed };
+
 struct InstallBackend {
     bool (*registerTask)(const InstallPackage&,int&,std::string&);
     bool (*startTask)(int,std::string&);
     bool (*pollTask)(int,int&,bool&,std::string&);
     bool (*resumeTask)(int,std::string&);
     bool (*removeWorker)(std::string&) = nullptr;
+    WorkerInstallState (*checkWorker)() = nullptr;
 };
 bool inspectPackage(const std::string&,InstallPackage&,std::string&);
 std::vector<InstallPackage> scanPackages(const std::string&,int,std::string&);
@@ -26,8 +29,12 @@ class PackageInstaller {
     std::vector<InstallPackage> requests;std::string busyPath;bool journalDirty=false;int journalError=0;
     bool removingWorker=false, removalReady=false;
     std::string removalError;
+    bool checkWorkerPending = false;
+    WorkerInstallState workerState = WorkerInstallState::Unchecked;
     static void* entry(void*);void loop();bool saveLocked();void updateViewLocked();
 public:
+    void checkWorker();
+    WorkerInstallState workerInstallState();
     bool canRemoveWorker(std::string& error);
     void removeWorker();
     bool takeWorkerRemoval(std::string& error);

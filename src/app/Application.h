@@ -59,13 +59,14 @@ private:
     bool downloadsReady_ = false;
     std::shared_ptr<const SourceTable> displayedSources_;
     bool resumeAttempted_ = false;
-    uint64_t workerStopDeadline_ = 0;
+    uint64_t workerStopDeadline_ = 0, nextWorkerCheck_ = 0;
+    bool reinstallAfterRemoval_ = false, workerMenuWasBusy_ = false;
     bool installerReady_ = false;
     bool keyboardFallback_ = false;
     bool keyboardForKey_ = false; // the open keyboard types the Debrid key
     std::u16string keyboardTitle_, keyboardHint_; // held while the keyboard is open
     bool splashHidden_ = false;
-    uint64_t lastFrameMicros_ = 0;
+    uint64_t lastFrameMicros_ = 0, nextStallLog_ = 0;
     uint64_t downloadVersion_ = 0;
     ListingLookup lookup_;
     std::set<std::string> sizeAttempts_, detailAttempts_;

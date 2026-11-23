@@ -140,16 +140,62 @@ static bool appInstSymbol(int handle, const char* name, Function& function, std:
     return true;
 }
 
-static bool uninstallDownloadWorker(std::string& error) {
-    constexpr const char* title = "NULL00003";
-    constexpr const char* content = "IV0000-NULL00003_00-NULLSTOREWORKER0";
+static constexpr const char* kWorkerTitle = "NULL00003";
+
+static int appInstallModule(std::string& error) {
     int handle = loadedModule("libSceAppInstUtil");
     if (handle < 0) {
         const int result = sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_APP_INST_UTIL);
-        if (result) { error = apiError("Worker uninstall module unavailable", result); return false; }
+        if (result) { error = apiError("Worker install module unavailable", result); return -1; }
         handle = loadedModule("libSceAppInstUtil");
     }
-    if (handle < 0) { error = "PS4 could not open the worker uninstall module."; return false; }
+    if (handle < 0) error = "PS4 could not open the worker install module.";
+    return handle;
+}
+
+static bool workerPackageDigest(const char* path, unsigned char (&digest)[32]) {
+    FILE* file = fopen(path, "rb");
+    if (!file) return false;
+    unsigned char magic[4];
+    // The PKG header holds a digest of the PFS payload. Builds share an app version.
+    const bool read = fread(magic, 1, sizeof magic, file) == sizeof magic &&
+        memcmp(magic, "\x7f" "CNT", sizeof magic) == 0 && fseek(file, 0x440, SEEK_SET) == 0 &&
+        fread(digest, 1, sizeof digest, file) == sizeof digest;
+    fclose(file);
+    return read && std::any_of(digest, digest + sizeof digest, [](unsigned char byte) { return byte != 0; });
+}
+
+static WorkerInstallState checkDownloadWorker() {
+    std::string error;
+    const int handle = appInstallModule(error);
+    if (handle < 0) return WorkerInstallState::Unknown;
+
+    decltype(&sceAppInstUtilInitialize) init;
+    decltype(&sceAppInstUtilTerminate) term;
+    decltype(&sceAppInstUtilAppExists) exists;
+    if (!appInstSymbol(handle, "sceAppInstUtilInitialize", init, error) ||
+        !appInstSymbol(handle, "sceAppInstUtilTerminate", term, error) ||
+        !appInstSymbol(handle, "sceAppInstUtilAppExists", exists, error) || init() != 0)
+        return WorkerInstallState::Unknown;
+
+    int32_t present = 0;
+    const int result = exists(kWorkerTitle, &present);
+    term();
+    if (result != 0) return WorkerInstallState::Unknown;
+    if (!present) return WorkerInstallState::Missing;
+
+    unsigned char installed[32], bundled[32];
+    if (!workerPackageDigest("/user/app/NULL00003/app.pkg", installed) ||
+        !workerPackageDigest("/app0/assets/worker/download-worker.pkg", bundled))
+        return WorkerInstallState::Installed;
+    return memcmp(installed, bundled, sizeof installed) == 0 ?
+        WorkerInstallState::Current : WorkerInstallState::Different;
+}
+
+static bool uninstallDownloadWorker(std::string& error) {
+    constexpr const char* content = "IV0000-NULL00003_00-NULLSTOREWORKER0";
+    const int handle = appInstallModule(error);
+    if (handle < 0) return false;
 
     decltype(&sceAppInstUtilInitialize) init;
     decltype(&sceAppInstUtilTerminate) term;
@@ -167,15 +213,15 @@ static bool uninstallDownloadWorker(std::string& error) {
     int32_t present = 0;
     if (installing(content)) {
         error = "Wait for the worker installation to finish before removing it.";
-    } else if ((result = exists(title, &present)) != 0) {
+    } else if ((result = exists(kWorkerTitle, &present)) != 0) {
         error = apiError("Could not check the installed worker", result);
     } else if (present) {
-        if ((result = remove(title)) != 0) error = apiError("PS4 could not uninstall the worker", result);
-        else if ((result = exists(title, &present)) != 0) error = apiError("Could not verify worker removal", result);
+        if ((result = remove(kWorkerTitle)) != 0) error = apiError("PS4 could not uninstall the worker", result);
+        else if ((result = exists(kWorkerTitle, &present)) != 0) error = apiError("Could not verify worker removal", result);
         else if (present) error = "PS4 accepted removal. The worker is still listed. Check Notifications.";
     }
     term();
-    installLog("Download Worker uninstall (%s): %s", title, error.empty() ? "confirmed absent" : error.c_str());
+    installLog("Download Worker uninstall (%s): %s", kWorkerTitle, error.empty() ? "confirmed absent" : error.c_str());
     return error.empty();
 }
-InstallBackend ps4InstallBackend(){return {registerTask,startTask,pollTask,resumeTask,uninstallDownloadWorker};}
+InstallBackend ps4InstallBackend(){return {registerTask,startTask,pollTask,resumeTask,uninstallDownloadWorker,checkDownloadWorker};}

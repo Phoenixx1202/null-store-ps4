@@ -47,6 +47,21 @@ enum Action {
     SETTINGS  // OPTIONS on the catalogue
 };
 
+enum class WorkerAction { Start, Stop, Install, Replace, Reinstall, Uninstall, Test };
+
+inline const char* workerActionLabel(WorkerAction action) {
+    switch (action) {
+        case WorkerAction::Start: return "Start worker";
+        case WorkerAction::Stop: return "Stop worker";
+        case WorkerAction::Install:
+        case WorkerAction::Replace: return "Install included worker";
+        case WorkerAction::Reinstall: return "Reinstall worker";
+        case WorkerAction::Uninstall: return "Uninstall worker";
+        case WorkerAction::Test: return "Test torrent connection";
+    }
+    return "";
+}
+
 // The rows of Settings, top to bottom.
 enum SettingsRow {
     SETTING_SOURCE,
@@ -134,6 +149,45 @@ struct StoreState {
     bool confirmWorkerRemoval = false, uninstallWorker = false, workerRemovalBusy = false;
     bool workerMenu = false, removeMenu = false, removeFiles = false;
     bool startWorker = false, stopWorker = false, probeTorrent = false;
+    bool workerRunning = false, reinstallWorker = false;
+    WorkerAction confirmedWorkerAction = WorkerAction::Uninstall;
+    WorkerInstallState workerInstall = WorkerInstallState::Unchecked;
+    std::vector<WorkerAction> workerActions{WorkerAction::Test};
+
+    void updateWorkerOptions(WorkerInstallState installed, bool running) {
+        workerInstall = installed;
+        workerRunning = running;
+        const bool hadOptions = workerActions.size() > 1;
+        const int previous = std::clamp(menuChoice, 0, static_cast<int>(workerActions.size()) - 1);
+        const WorkerAction selectedAction = workerActions[previous];
+        workerActions.clear();
+        if (!workerRemovalBusy) {
+            if (running) workerActions.push_back(WorkerAction::Stop);
+            if (installed == WorkerInstallState::Current) {
+                if (!running) workerActions.push_back(WorkerAction::Start);
+                workerActions.push_back(WorkerAction::Reinstall);
+                workerActions.push_back(WorkerAction::Uninstall);
+            } else if (installed == WorkerInstallState::Installed || installed == WorkerInstallState::Different) {
+                if (!running && installed == WorkerInstallState::Installed) workerActions.push_back(WorkerAction::Start);
+                workerActions.push_back(WorkerAction::Replace);
+            } else if (!running && (installed == WorkerInstallState::Missing || installed == WorkerInstallState::Unknown)) {
+                workerActions.push_back(WorkerAction::Install);
+            }
+        }
+        workerActions.push_back(WorkerAction::Test);
+        if (workerMenu) {
+            const auto found = std::find(workerActions.begin(), workerActions.end(), selectedAction);
+            menuChoice = !hadOptions || found == workerActions.end() ? 0 : static_cast<int>(found - workerActions.begin());
+        }
+    }
+
+    void openWorkerInstaller() {
+        installJob = installSelected = 0;
+        installPath.clear();
+        packages.clear();
+        installError.clear();
+        installPicker = installLoading = installScanRequest = true;
+    }
     int menuChoice = 0;
     int sourceChoice = 0, sortChoice = 0;
     int debrid = 0, debridChoice = 0;        // the Debrid service (0: none)
@@ -599,14 +653,16 @@ struct StoreState {
             if (a == UP || a == DOWN) menuChoice = 1 - menuChoice;
             if (a == BACK || a == CONFIRM) {
                 uninstallWorker = a == CONFIRM && menuChoice == 1;
+                reinstallWorker = uninstallWorker && confirmedWorkerAction != WorkerAction::Uninstall;
                 confirmWorkerRemoval = false;
                 workerMenu = !uninstallWorker;
-                menuChoice = 4;
+                const auto found = std::find(workerActions.begin(), workerActions.end(), confirmedWorkerAction);
+                menuChoice = found == workerActions.end() ? 0 : static_cast<int>(found - workerActions.begin());
             }
             return;
         }
         if (workerMenu || removeMenu) {
-            const int last = removeMenu ? 2 : 4;
+            const int last = removeMenu ? 2 : static_cast<int>(workerActions.size()) - 1;
             if (a == BACK) { workerMenu = removeMenu = false; return; }
             if (a == UP) menuChoice = std::max(0, menuChoice - 1);
             if (a == DOWN) menuChoice = std::min(last, menuChoice + 1);
@@ -617,18 +673,19 @@ struct StoreState {
                     deletingJobs.insert(cancelJob);
                     hideDeletedJobs();
                 } else if (workerMenu) {
-                    if (workerRemovalBusy && menuChoice != 3) { notice = "Removing download worker…"; return; }
-                    if (menuChoice == 4) { confirmWorkerRemoval = true; menuChoice = 0; workerMenu = false; return; }
-                    if (menuChoice == 0) startWorker = true;
-                    if (menuChoice == 1) {
-                        installJob = installSelected = 0;
-                        installPath.clear();
-                        packages.clear();
-                        installError.clear();
-                        installPicker = installLoading = installScanRequest = true;
+                    switch (workerActions[menuChoice]) {
+                        case WorkerAction::Start: startWorker = true; break;
+                        case WorkerAction::Stop: stopWorker = true; break;
+                        case WorkerAction::Install: openWorkerInstaller(); break;
+                        case WorkerAction::Test: probeTorrent = true; break;
+                        case WorkerAction::Replace:
+                        case WorkerAction::Reinstall:
+                        case WorkerAction::Uninstall:
+                            confirmedWorkerAction = workerActions[menuChoice];
+                            confirmWorkerRemoval = true;
+                            menuChoice = 0;
+                            break;
                     }
-                    if (menuChoice == 2) stopWorker = true;
-                    if (menuChoice == 3) probeTorrent = true;
                 }
                 workerMenu = removeMenu = false;
             }

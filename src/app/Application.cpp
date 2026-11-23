@@ -222,13 +222,23 @@ void Application::frame()
     if (textInput_.isOpen()) {
         pad_.ignoreUntilReleased();
     }
-    pad_.update(static_cast<double>(sceKernelGetProcessTime()) / 1000000.0);
-
+    const uint64_t started = sceKernelGetProcessTime();
+    pad_.update(static_cast<double>(started) / 1000000.0);
     handleInput();
     handleKeyboard();
     handleRequests();
+    const uint64_t requestsDone = sceKernelGetProcessTime();
     syncWorkers();
+    const uint64_t renderStart = sceKernelGetProcessTime();
     render();
+    const uint64_t finished = sceKernelGetProcessTime();
+    if (finished - started >= 1000000 && finished >= nextStallLog_) {
+        nextStallLog_ = finished + 5000000;
+        NS_LOG_WARN("Slow frame: input/requests=%llu ms updates=%llu ms render=%llu ms",
+                    static_cast<unsigned long long>((requestsDone - started) / 1000),
+                    static_cast<unsigned long long>((renderStart - requestsDone) / 1000),
+                    static_cast<unsigned long long>((finished - renderStart) / 1000));
+    }
 }
 
 void Application::handleInput()
@@ -349,6 +359,7 @@ void Application::handleRequests()
         if (!installerReady_) installerReady_ = installer_->start();
         if (!installerReady_ || !downloadsReady_) ui.notice = "Download or installer thread unavailable. Reopen the store.";
         else if (installer_->canRemoveWorker(ui.notice) && downloads_->stopForRemoval(ui.notice)) {
+            reinstallAfterRemoval_ = ui.reinstallWorker;
             ui.workerRemovalBusy = true;
             workerStopDeadline_ = sceKernelGetProcessTime() + 30000000;
             ui.notice = "Stopping the worker and returning downloads to the store…";
@@ -460,6 +471,25 @@ void Application::syncWorkers()
         detailAttempts_.clear();
         refresh_->start(0, false, true);
     }
+    if (ui.workerMenu) {
+        if (!installerReady_) installerReady_ = installer_->start();
+        const uint64_t now = sceKernelGetProcessTime();
+        if (installerReady_ && now >= nextWorkerCheck_) {
+            nextWorkerCheck_ = now + 2000000;
+            installer_->checkWorker();
+        }
+        auto installed = installer_->workerInstallState();
+        bool running = false, verified = false;
+        downloads_->workerStatus(running, verified);
+        if (verified && (installed == WorkerInstallState::Installed || running)) installed = WorkerInstallState::Current;
+        if (ui.workerInstall != installed || ui.workerRunning != running ||
+            ui.workerRemovalBusy != workerMenuWasBusy_) {
+            ui.updateWorkerOptions(installed, running);
+            workerMenuWasBusy_ = ui.workerRemovalBusy;
+        }
+    } else {
+        nextWorkerCheck_ = 0;
+    }
     const std::string connection = downloads_->connectionStatus();
     if (connection != ui.serviceStatus) {
         ui.serviceStatus = connection;
@@ -467,7 +497,9 @@ void Application::syncWorkers()
     downloads_->takeNotice(ui.notice);
     if (ui.workerRemovalBusy) {
         std::string error;
-        if (workerStopDeadline_ && downloads_->ownsQueue()) {
+        bool running = false, verified = false;
+        downloads_->workerStatus(running, verified);
+        if (workerStopDeadline_ && !running && downloads_->ownsQueue()) {
             workerStopDeadline_ = 0;
             ui.notice = "Uninstalling download worker…";
             installer_->removeWorker();
@@ -477,6 +509,7 @@ void Application::syncWorkers()
             ui.notice = "Could not return downloads to the store. Worker removal cancelled.";
         } else if (installer_->takeWorkerRemoval(error)) {
             ui.workerRemovalBusy = false;
+            if (error.empty() && reinstallAfterRemoval_) ui.openWorkerInstaller();
             ui.notice = error.empty() ? "Download worker removed. Downloads continue while the store is open." : error;
         }
     }

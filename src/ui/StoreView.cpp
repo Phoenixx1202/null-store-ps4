@@ -148,20 +148,27 @@ void StoreView::draw(StoreState& s, float dt)
         r_.rect(box(0, 0, kScreenW, kScreenH), kScrim.withAlpha(kScrim.a * shown));
         r_.pushOpacity(shown);
         if (s.confirmWorkerRemoval) {
-            const Rect frame = dialog(1000, 500, "Uninstall download worker?");
-            r_.textFit("Downloads will continue in the open store. Your files and queue are kept.",
+            const bool uninstall = s.confirmedWorkerAction == WorkerAction::Uninstall;
+            const Rect frame = dialog(1000, 500, uninstall ? "Uninstall download worker?" :
+                                      s.confirmedWorkerAction == WorkerAction::Reinstall ?
+                                      "Reinstall download worker?" : "Replace download worker?");
+            r_.textFit(uninstall ? "Downloads can continue in the open store. Your files and queue are kept." :
+                       "The current worker will be removed. You can then install the included build.",
                        frame.x + 56, frame.y + 145, kFontBody, kDim, frame.w - 112);
             option(box(frame.x + 56, frame.y + 195, frame.w - 112, 58), tr("Cancel"), kFontBody, s.menuChoice == 0);
-            option(box(frame.x + 56, frame.y + 265, frame.w - 112, 58), "Uninstall worker", kFontBody, s.menuChoice == 1);
+            option(box(frame.x + 56, frame.y + 265, frame.w - 112, 58), uninstall ? "Uninstall worker" : tr("Continue"), kFontBody, s.menuChoice == 1);
             dialogHints(frame, {{{Key::Cross}, tr("Select")}, {{Key::Circle}, tr("Back")}});
         } else if (s.workerMenu || s.removeMenu) {
-            const Rect frame = dialog(1000, 580, s.workerMenu ? "Background downloads" : "Remove download");
-            const char* worker[] = {"Start installed worker", "Install included worker", "Stop worker", "Test torrent connection", "Uninstall worker"};
             const char* remove[] = {"Remove and keep files", "Remove and delete files", "Cancel"};
-            const int count = s.workerMenu ? 5 : 3;
+            const int count = s.workerMenu ? static_cast<int>(s.workerActions.size()) : 3;
+            const Rect frame = dialog(1000, 240 + 70 * count, s.workerMenu ? "Background downloads" : "Remove download");
+            if (s.workerMenu && s.workerActions.size() == 1) {
+                r_.textFit(s.workerRemovalBusy ? "Updating worker…" : "Checking worker installation…",
+                           frame.x + 56, frame.y + 126, kFontLabel, kDim, frame.w - 112);
+            }
             for (int i = 0; i < count; ++i)
                 option(box(frame.x + 56, frame.y + 150 + i * 70, frame.w - 112, 58),
-                       s.workerMenu ? worker[i] : remove[i], kFontBody, i == s.menuChoice);
+                       tr(s.workerMenu ? workerActionLabel(s.workerActions[i]) : remove[i]), kFontBody, i == s.menuChoice);
             dialogHints(frame, {{{Key::Cross}, tr("Select")}, {{Key::Circle}, tr("Back")}});
         }
         if (s.sourcePicker) drawSourcePicker(s);
