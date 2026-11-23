@@ -19,6 +19,8 @@ extern "C" int32_t sceKernelDlsym(int32_t,const char*,void**);
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <mutex>
+#include <time.h>
 // PS4 Games Installer uses a public BGFT session with StorageEx for local PKGs.
 // Keep task start, resume and progress on that same session.
 using NullBGFT::Init;using NullBGFT::ParamsEx;using NullBGFT::Progress;
@@ -141,7 +143,9 @@ static bool appInstSymbol(int handle, const char* name, Function& function, std:
     return true;
 }
 
+static std::mutex workerInventoryMutex;
 static constexpr const char* kWorkerTitle = "NULL00003";
+static constexpr const char* kWorkerContent = "IV0000-NULL00003_00-NULLSTOREWORKER0";
 
 static int appInstallModule(std::string& error) {
     int handle = loadedModule("libSceAppInstUtil");
@@ -154,35 +158,62 @@ static int appInstallModule(std::string& error) {
     return handle;
 }
 
+static WorkerInstallState reportWorkerCheck(WorkerInstallState state, int result, int pkgError = 0, int manifestError = 0) {
+    static auto previous = WorkerInstallState::Unchecked;
+    if (state != previous) {
+        installLog("Worker inventory: state=%d result=0x%08X package errno=%d manifest errno=%d",
+                   static_cast<int>(state), static_cast<unsigned>(result), pkgError, manifestError);
+        previous = state;
+    }
+    return state;
+}
+
 static WorkerInstallState checkDownloadWorker() {
+    const std::lock_guard<std::mutex> lock(workerInventoryMutex);
     std::string error;
     const int handle = appInstallModule(error);
-    if (handle < 0) return WorkerInstallState::Unknown;
+    if (handle < 0) return reportWorkerCheck(WorkerInstallState::Unknown, handle);
 
     decltype(&sceAppInstUtilInitialize) init;
     decltype(&sceAppInstUtilTerminate) term;
     decltype(&sceAppInstUtilAppExists) exists;
     if (!appInstSymbol(handle, "sceAppInstUtilInitialize", init, error) ||
         !appInstSymbol(handle, "sceAppInstUtilTerminate", term, error) ||
-        !appInstSymbol(handle, "sceAppInstUtilAppExists", exists, error) || init() != 0)
-        return WorkerInstallState::Unknown;
+        !appInstSymbol(handle, "sceAppInstUtilAppExists", exists, error))
+        return reportWorkerCheck(WorkerInstallState::Unknown, -1);
+    int result = init();
+    if (result != 0) return reportWorkerCheck(WorkerInstallState::Unknown, result);
 
     int32_t present = 0;
-    const int result = exists(kWorkerTitle, &present);
+    result = exists(kWorkerTitle, &present);
+    decltype(&sceAppInstUtilAppIsInInstalling) installing;
+    const bool installingKnown = appInstSymbol(handle, "sceAppInstUtilAppIsInInstalling", installing, error);
+    const bool busy = installingKnown && installing(kWorkerContent);
     term();
-    if (result != 0) return WorkerInstallState::Unknown;
-    if (!present) return WorkerInstallState::Missing;
-
-    switch (workerPackageMatch()) {
-        case WorkerPackageMatch::Current: return WorkerInstallState::Current;
-        case WorkerPackageMatch::Different: return WorkerInstallState::Different;
-        case WorkerPackageMatch::Unverified: return WorkerInstallState::Installed;
+    if (busy) return reportWorkerCheck(WorkerInstallState::Installing, 0);
+    if (result != 0) return reportWorkerCheck(WorkerInstallState::Unknown, result);
+    if (!present) {
+        workerInstallConfirmedThisSession = false;
+        return reportWorkerCheck(WorkerInstallState::Missing, 0);
     }
-    return WorkerInstallState::Unknown;
+    const bool installedHere = installingKnown && workerInstallConfirmedThisSession;
+    int pkgError = 0, manifestError = 0;
+    const auto match = installedWorkerPackageMatch(pkgError, manifestError);
+    if (match == WorkerPackageMatch::Different) {
+        workerInstallConfirmedThisSession = false;
+        return reportWorkerCheck(WorkerInstallState::Different, result, pkgError, manifestError);
+    }
+    if (match == WorkerPackageMatch::Current || installedHere)
+        return reportWorkerCheck(WorkerInstallState::Current, result, pkgError, manifestError);
+    return reportWorkerCheck(WorkerInstallState::Installed, 0, pkgError, manifestError);
+}
+
+bool ps4WorkerInstallVerified() {
+    return checkDownloadWorker() == WorkerInstallState::Current;
 }
 
 static bool uninstallDownloadWorker(std::string& error) {
-    constexpr const char* content = "IV0000-NULL00003_00-NULLSTOREWORKER0";
+    const std::lock_guard<std::mutex> lock(workerInventoryMutex);
     const int handle = appInstallModule(error);
     if (handle < 0) return false;
 
@@ -200,14 +231,43 @@ static bool uninstallDownloadWorker(std::string& error) {
     int result = init();
     if (result) { error = apiError("Could not initialize worker removal", result); return false; }
     int32_t present = 0;
-    if (installing(content)) {
+    if (installing(kWorkerContent)) {
         error = "Wait for the worker installation to finish before removing it.";
     } else if ((result = exists(kWorkerTitle, &present)) != 0) {
         error = apiError("Could not check the installed worker", result);
     } else if (present) {
-        if ((result = remove(kWorkerTitle)) != 0) error = apiError("PS4 could not uninstall the worker", result);
-        else if ((result = exists(kWorkerTitle, &present)) != 0) error = apiError("Could not verify worker removal", result);
-        else if (present) error = "PS4 accepted removal. The worker is still listed. Check Notifications.";
+        result = remove(kWorkerTitle);
+        if (result != 0) {
+            installLog("Worker removal returned 0x%08X", static_cast<unsigned>(result));
+            // Try the user-scoped API for the signed-in user who installed it.
+            int32_t user = -1;
+            decltype(&sceAppInstUtilAppUnInstallByUser) removeForUser;
+            std::string lookupError;
+            int32_t stillPresent = 0;
+            if (exists(kWorkerTitle, &stillPresent) == 0) {
+                if (!stillPresent) result = 0;
+                else if (!installing(kWorkerContent) && sceUserServiceGetForegroundUser(&user) == 0 && user >= 0 &&
+                         appInstSymbol(handle, "sceAppInstUtilAppUnInstallByUser", removeForUser, lookupError)) {
+                    result = removeForUser(kWorkerTitle, user);
+                    installLog("User-scoped worker removal returned 0x%08X", static_cast<unsigned>(result));
+                }
+            }
+        }
+        if (result != 0) {
+            char code[16];
+            snprintf(code, sizeof code, "0x%08X", static_cast<unsigned>(result));
+            error = std::string("PS4 refused to remove the worker (") + code +
+                "). Remove NULL_store Download Worker in PS4 Settings > Storage, then try again.";
+        } else {
+            for (int attempt = 0; attempt < 12; ++attempt) {
+                result = exists(kWorkerTitle, &present);
+                if (result || !present) break;
+                const timespec pause{0, 250000000};
+                nanosleep(&pause, nullptr);
+            }
+            if (result) error = apiError("Could not verify worker removal", result);
+            else if (present) error = "PS4 is still removing the worker. Check Notifications before reinstalling.";
+        }
     }
     term();
     installLog("Download Worker uninstall (%s): %s", kWorkerTitle, error.empty() ? "confirmed absent" : error.c_str());

@@ -1,6 +1,7 @@
 #include "path_info.h"
 #include "installer.h"
 #include "queue_store.h"
+#include "worker_package.h"
 #include "download_paths.h"
 #include "install_log.h"
 #include "bgft_abi.h"
@@ -120,6 +121,7 @@ void PackageInstaller::loop(){for(;;){pthread_mutex_lock(&mutex);if(quitting){pt
         removingWorker = false;
         pthread_mutex_unlock(&mutex);
         std::string error;
+        workerInstallConfirmedThisSession = false;
         bool ok = workerPackages && backend.removeWorker && backend.removeWorker(error);
         pthread_mutex_lock(&mutex);
         if (ok) {
@@ -173,6 +175,8 @@ void PackageInstaller::loop(){for(;;){pthread_mutex_lock(&mutex);if(quitting){pt
                 ok=path==workerPath(root)&&pkg.contentId==workerContentId&&readQueueFile(path,staged)==1&&staged==readFile(workerSource);
                 if(!ok)error="Bundled worker verification failed. Reopen worker setup.";
                 pkg.name="NULL_store Download Worker";
+                pkg.verifiedWorkerInstall = ok;
+                if (ok) workerInstallConfirmedThisSession = false;
             }else if(job<=0)ok=false;
             pkg.jobId=job;
             if(ok)ok=backend.registerTask&&backend.registerTask(pkg,pkg.taskId,error)&&pkg.taskId>=0;
@@ -187,6 +191,7 @@ void PackageInstaller::loop(){for(;;){pthread_mutex_lock(&mutex);if(quitting){pt
         if(ok&&!reused)ok=backend.startTask&&backend.startTask(pkg.taskId,error);
         pthread_mutex_lock(&mutex);
         if(ok){
+            if (alreadyComplete && pkg.verifiedWorkerInstall) workerInstallConfirmedThisSession = true;
             viewError.clear();for(auto&t:tasks)if(t.taskId==pkg.taskId){t.state=alreadyComplete?InstallState::Complete:InstallState::Installing;t.percent=alreadyComplete?100:std::max(-1,std::min(99,pkg.percent));t.note=alreadyComplete?"Installed":"Installing";}saveLocked();
         }else{
             viewError=error.empty()?"Could not install this package":error;
@@ -197,6 +202,6 @@ void PackageInstaller::loop(){for(;;){pthread_mutex_lock(&mutex);if(quitting){pt
     }
     // Only IDs created by Portal are polled; never adopt a task by content ID.
     std::vector<InstallPackage>poll;for(auto&t:tasks)if((workerPackages||t.jobId>0)&&(t.state==InstallState::Registered||t.state==InstallState::Installing||t.state==InstallState::Unavailable))poll.push_back(t);pthread_mutex_unlock(&mutex);
-    for(auto&t:poll){std::string error;bool ok=true;if(t.state==InstallState::Registered)ok=backend.resumeTask?backend.resumeTask(t.taskId,error):backend.startTask&&backend.startTask(t.taskId,error);int percent=t.percent;bool complete=false;if(ok)ok=backend.pollTask&&backend.pollTask(t.taskId,percent,complete,error);pthread_mutex_lock(&mutex);for(auto&owned:tasks)if(owned.taskId==t.taskId){InstallState state=!ok?InstallState::Unavailable:complete?InstallState::Complete:InstallState::Installing;int value=complete?100:std::max(-1,std::min(99,percent));std::string note=!ok?error:complete?"Installed":"Installing";bool changed=owned.state!=state||owned.percent!=value||owned.note!=note;owned.state=state;owned.percent=value;owned.note=note;if(changed){saveLocked();updateViewLocked();}break;}pthread_mutex_unlock(&mutex);}
+    for(auto&t:poll){std::string error;bool ok=true;if(t.state==InstallState::Registered)ok=backend.resumeTask?backend.resumeTask(t.taskId,error):backend.startTask&&backend.startTask(t.taskId,error);int percent=t.percent;bool complete=false;if(ok)ok=backend.pollTask&&backend.pollTask(t.taskId,percent,complete,error);pthread_mutex_lock(&mutex);for(auto&owned:tasks)if(owned.taskId==t.taskId){InstallState state=!ok?InstallState::Unavailable:complete?InstallState::Complete:InstallState::Installing;int value=complete?100:std::max(-1,std::min(99,percent));std::string note=!ok?error:complete?"Installed":"Installing";bool changed=owned.state!=state||owned.percent!=value||owned.note!=note;owned.state=state;owned.percent=value;owned.note=note;if(changed){if (complete && ok && owned.verifiedWorkerInstall) workerInstallConfirmedThisSession = true;saveLocked();updateViewLocked();}break;}pthread_mutex_unlock(&mutex);}
     pthread_mutex_lock(&mutex);if(journalDirty)saveLocked();if(!quitting&&!scanPending&&!removingWorker&&!checkWorkerPending&&requests.empty()){struct timespec until;clock_gettime(CLOCK_REALTIME,&until);until.tv_sec+=1;pthread_cond_timedwait(&changed,&mutex,&until);}pthread_mutex_unlock(&mutex);
 }}

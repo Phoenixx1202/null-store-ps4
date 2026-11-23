@@ -167,7 +167,12 @@ void StoreView::draw(StoreState& s, float dt)
             const int count = s.workerMenu ? static_cast<int>(s.workerActions.size()) : 3;
             const Rect frame = dialog(1000, 240 + 70 * count, s.workerMenu ? "Background downloads" : "Remove download");
             if (s.workerMenu && s.workerActions.size() == 1) {
-                r_.textFit(s.workerRemovalBusy ? "Updating worker…" : "Checking worker installation…",
+                const char* status = s.workerRemovalBusy ? "Updating worker…" :
+                                     s.workerInstall == WorkerInstallState::Installing ? "Worker installation is in progress…" :
+                                     "Checking worker installation…";
+                r_.textFit(status, frame.x + 56, frame.y + 126, kFontLabel, kDim, frame.w - 112);
+            } else if (s.workerMenu && s.workerInstall == WorkerInstallState::Installed) {
+                r_.textFit("Worker installed. Build verification unavailable.",
                            frame.x + 56, frame.y + 126, kFontLabel, kDim, frame.w - 112);
             }
             for (int i = 0; i < count; ++i)

@@ -169,6 +169,7 @@ struct StoreState {
                 workerActions.push_back(WorkerAction::Uninstall);
             } else if (installed == WorkerInstallState::Installed || installed == WorkerInstallState::Different) {
                 workerActions.push_back(WorkerAction::Replace);
+                workerActions.push_back(WorkerAction::Uninstall);
             } else if (!running && (installed == WorkerInstallState::Missing || installed == WorkerInstallState::Unknown)) {
                 workerActions.push_back(WorkerAction::Install);
             }

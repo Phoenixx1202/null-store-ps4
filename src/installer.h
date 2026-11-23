@@ -3,14 +3,14 @@
 #include <stdint.h>
 #include <pthread.h>
 enum class InstallState {Ready,Registering,Registered,Installing,Complete,Error,Unavailable};
-struct InstallPackage {int jobId=0,taskId=-1;std::string path,name,contentId,titleId,note;uint64_t bytes=0;uint32_t contentType=0,contentFlags=0;bool patch=false;InstallState state=InstallState::Ready;int percent=-1;};
+struct InstallPackage {int jobId=0,taskId=-1;std::string path,name,contentId,titleId,note;uint64_t bytes=0;uint32_t contentType=0,contentFlags=0;bool patch=false,verifiedWorkerInstall=false;InstallState state=InstallState::Ready;int percent=-1;};
 inline std::string installStatusText(const InstallPackage& package){
     if(package.state==InstallState::Complete)return "Installed";
     if(package.state!=InstallState::Installing)return package.note;
     if(package.percent>0&&package.percent<100)return "Installing  "+std::to_string(package.percent)+"%";
     return "Installing";
 }
-enum class WorkerInstallState { Unchecked, Unknown, Missing, Current, Different, Installed };
+enum class WorkerInstallState { Unchecked, Unknown, Missing, Current, Different, Installed, Installing };
 
 struct InstallBackend {
     bool (*registerTask)(const InstallPackage&,int&,std::string&);
@@ -42,3 +42,4 @@ public:
     void scan(int);void scan(int,const std::string&);void submit(const std::string&);bool snapshot(uint64_t&,std::vector<InstallPackage>&,bool&,std::string&);
 };
 InstallBackend ps4InstallBackend();
+bool ps4WorkerInstallVerified();
