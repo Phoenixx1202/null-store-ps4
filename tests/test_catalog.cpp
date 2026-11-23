@@ -100,6 +100,12 @@ int main(){
     assert(ui.uninstallWorker&&!ui.reinstallWorker&&!ui.confirmWorkerRemoval);ui.uninstallWorker=false;
     ui.updateWorkerOptions(WorkerInstallState::Different, false);
     ui.action(MANAGE);assert(ui.workerActions.front()==WorkerAction::Replace);ui.action(BACK);
+    ui.updateWorkerOptions(WorkerInstallState::Installed, false);
+    assert(std::find(ui.workerActions.begin(), ui.workerActions.end(), WorkerAction::Start)==ui.workerActions.end());
+    ui.workerStarting=true;
+    ui.action(TAB_NEXT);ui.action(MANAGE);ui.action(CONFIRM);
+    assert(ui.tab==TAB_DOWNLOADS&&!ui.workerMenu&&!ui.startWorker);
+    ui.workerStarting=false;
     DownloadRow running;running.id=2;running.state=DownloadState::Active;ui.jobs.push_back(running);ui.action(SEARCH);assert(!ui.installPicker);ui.jobs.clear();
     DownloadRow completed;completed.id=1;completed.state=DownloadState::Complete;ui.jobs.push_back(completed);ui.action(SEARCH);assert(ui.installPicker&&ui.installScanRequest&&ui.installJob==1);InstallPackage package;package.path="/generated/base.pkg";ui.packages.push_back(package);ui.installLoading=false;ui.action(CONFIRM);assert(ui.installSubmitRequest);ui.action(BACK);assert(!ui.installPicker);
     ui.action(FAVORITE);ui.menuChoice=1;ui.action(CONFIRM);assert(ui.cancelRequest&&ui.cancelJob==1&&ui.jobs.empty()&&ui.deletingJobs.count(1));ui.cancelRequest=false;

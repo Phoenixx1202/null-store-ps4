@@ -135,7 +135,7 @@ void StoreView::draw(StoreState& s, float dt)
     }
 
     // Dialogs fade in; the one open is told apart by its flag.
-    const unsigned open = (s.confirmWorkerRemoval ? 512u : s.workerMenu || s.removeMenu ? 256u : 0u) | (s.sourcePicker ? 1u : 0u) | (s.keyboard ? 2u : 0u) | (s.installPicker ? 4u : 0u) |
+    const unsigned open = (s.workerStarting ? 1024u : s.confirmWorkerRemoval ? 512u : s.workerMenu || s.removeMenu ? 256u : 0u) | (s.sourcePicker ? 1u : 0u) | (s.keyboard ? 2u : 0u) | (s.installPicker ? 4u : 0u) |
                           (s.settings ? 8u : 0u) | (s.downloadLocationPicker ? 16u : 0u) |
                           (s.sourceFilterPicker ? 32u : 0u) | (s.sortPicker ? 64u : 0u) | (s.debridPicker ? 128u : 0u);
     if (open != openDialogs_) {
@@ -147,7 +147,11 @@ void StoreView::draw(StoreState& s, float dt)
     if (open) {
         r_.rect(box(0, 0, kScreenW, kScreenH), kScrim.withAlpha(kScrim.a * shown));
         r_.pushOpacity(shown);
-        if (s.confirmWorkerRemoval) {
+        if (s.workerStarting) {
+            const Rect frame = dialog(1000, 340, "Starting download worker");
+            r_.textFit("Please wait while the store saves your queue and checks the worker.",
+                       frame.x + 56, frame.y + 155, kFontBody, kDim, frame.w - 112);
+        } else if (s.confirmWorkerRemoval) {
             const bool uninstall = s.confirmedWorkerAction == WorkerAction::Uninstall;
             const Rect frame = dialog(1000, 500, uninstall ? "Uninstall download worker?" :
                                       s.confirmedWorkerAction == WorkerAction::Reinstall ?

@@ -31,4 +31,5 @@ Include your PS4 firmware and HEN version, the steps you tried, and the exact me
 | --- | --- |
 | Torrent stays on connecting or fails | `torrent.log` |
 | Background Service cannot start | `service-setup.log` and `service.log` |
+| Black screen when opening the store or a game | `app.log`. Record the console clock time and whether the PS button responds. |
 | PKG installation fails | `installer.log` or `installer-<uid>.log` |

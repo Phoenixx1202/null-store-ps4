@@ -63,6 +63,7 @@ struct GLContext::Impl {
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLSurface surface = EGL_NO_SURFACE;
     EGLContext context = EGL_NO_CONTEXT;
+    EGLint lastSwapError = EGL_SUCCESS;
 };
 
 GLContext::GLContext() : impl_(std::make_unique<Impl>()) {}
@@ -215,9 +216,12 @@ void GLContext::shutdown()
 bool GLContext::swapBuffers()
 {
     if (!eglSwapBuffers(impl_->display, impl_->surface)) {
-        NS_LOG_ERROR("eglSwapBuffers failed: 0x%04X", eglGetError());
+        const EGLint error = eglGetError();
+        if (error != impl_->lastSwapError) NS_LOG_ERROR("eglSwapBuffers failed: 0x%04X", error);
+        impl_->lastSwapError = error;
         return false;
     }
+    impl_->lastSwapError = EGL_SUCCESS;
     return true;
 }
 

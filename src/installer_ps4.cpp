@@ -2,6 +2,7 @@
 #include "mapped_module.h"
 #include "install_log.h"
 #include "bgft_abi.h"
+#include "worker_package.h"
 #include <orbis/Sysmodule.h>
 #include <orbis/UserService.h>
 #include <orbis/AppInstUtil.h>
@@ -153,18 +154,6 @@ static int appInstallModule(std::string& error) {
     return handle;
 }
 
-static bool workerPackageDigest(const char* path, unsigned char (&digest)[32]) {
-    FILE* file = fopen(path, "rb");
-    if (!file) return false;
-    unsigned char magic[4];
-    // The PKG header holds a digest of the PFS payload. Builds share an app version.
-    const bool read = fread(magic, 1, sizeof magic, file) == sizeof magic &&
-        memcmp(magic, "\x7f" "CNT", sizeof magic) == 0 && fseek(file, 0x440, SEEK_SET) == 0 &&
-        fread(digest, 1, sizeof digest, file) == sizeof digest;
-    fclose(file);
-    return read && std::any_of(digest, digest + sizeof digest, [](unsigned char byte) { return byte != 0; });
-}
-
 static WorkerInstallState checkDownloadWorker() {
     std::string error;
     const int handle = appInstallModule(error);
@@ -184,12 +173,12 @@ static WorkerInstallState checkDownloadWorker() {
     if (result != 0) return WorkerInstallState::Unknown;
     if (!present) return WorkerInstallState::Missing;
 
-    unsigned char installed[32], bundled[32];
-    if (!workerPackageDigest("/user/app/NULL00003/app.pkg", installed) ||
-        !workerPackageDigest("/app0/assets/worker/download-worker.pkg", bundled))
-        return WorkerInstallState::Installed;
-    return memcmp(installed, bundled, sizeof installed) == 0 ?
-        WorkerInstallState::Current : WorkerInstallState::Different;
+    switch (workerPackageMatch()) {
+        case WorkerPackageMatch::Current: return WorkerInstallState::Current;
+        case WorkerPackageMatch::Different: return WorkerInstallState::Different;
+        case WorkerPackageMatch::Unverified: return WorkerInstallState::Installed;
+    }
+    return WorkerInstallState::Unknown;
 }
 
 static bool uninstallDownloadWorker(std::string& error) {

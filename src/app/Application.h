@@ -35,12 +35,12 @@ public:
 
 private:
     bool init();
-    void frame();
+    bool frame();
     void handleInput();
     void handleKeyboard();
     void handleRequests();
     void syncWorkers();
-    void render();
+    bool render();
 
 
     std::string data_;
@@ -66,7 +66,8 @@ private:
     bool keyboardForKey_ = false; // the open keyboard types the Debrid key
     std::u16string keyboardTitle_, keyboardHint_; // held while the keyboard is open
     bool splashHidden_ = false;
-    uint64_t lastFrameMicros_ = 0, nextStallLog_ = 0;
+    uint64_t lastFrameMicros_ = 0, nextStallLog_ = 0, displayFailureSince_ = 0;
+    int lastDetailGame_ = 0;
     uint64_t downloadVersion_ = 0;
     ListingLookup lookup_;
     std::set<std::string> sizeAttempts_, detailAttempts_;

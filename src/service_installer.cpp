@@ -26,8 +26,9 @@ static void* install(void*)
 {
     std::string error;
     bool ok = portalStartPackagedWorker(error);
-    if (!ok && !portalWorkerRunning()) {
-        PackageInstaller installer(nullStoreDataRoot(), ps4InstallBackend());
+    const auto backend = ps4InstallBackend();
+    if (!ok && !portalWorkerRunning() && backend.checkWorker() == WorkerInstallState::Missing) {
+        PackageInstaller installer(nullStoreDataRoot(), backend);
         if (installer.start()) {
             installer.scan(0, "");
             uint64_t version = 0;

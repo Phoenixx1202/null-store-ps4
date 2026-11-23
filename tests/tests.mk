@@ -69,7 +69,7 @@ test: test-service-files
 test-service-files: build/test_service_files build/test_file_info
 	./build/test_service_files
 	./build/test_file_info
-build/test_installer_ps4: tests/test_installer_ps4.cpp src/installer_ps4.cpp src/installer.h src/bgft_abi.h src/install_log.h
+build/test_installer_ps4: tests/test_installer_ps4.cpp src/installer_ps4.cpp src/installer.h src/bgft_abi.h src/install_log.h src/worker_package.h
 	$(HOST_CXX) -std=c++17 -O1 -g -fsanitize=address,undefined -idirafter $(TOOLCHAIN)/include $< -o $@
 build/test_installer_retry: tests/test_installer_retry.cpp src/installer.cpp src/installer.h src/bgft_abi.h src/queue_store.h
 	$(HOST_CXX) -DPORTAL_HOST -std=c++17 -O1 -g -fsanitize=address,undefined tests/test_installer_retry.cpp src/installer.cpp -lpthread -o $@

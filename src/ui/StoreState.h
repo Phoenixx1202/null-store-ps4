@@ -149,7 +149,7 @@ struct StoreState {
     bool confirmWorkerRemoval = false, uninstallWorker = false, workerRemovalBusy = false;
     bool workerMenu = false, removeMenu = false, removeFiles = false;
     bool startWorker = false, stopWorker = false, probeTorrent = false;
-    bool workerRunning = false, reinstallWorker = false;
+    bool workerRunning = false, workerStarting = false, reinstallWorker = false;
     WorkerAction confirmedWorkerAction = WorkerAction::Uninstall;
     WorkerInstallState workerInstall = WorkerInstallState::Unchecked;
     std::vector<WorkerAction> workerActions{WorkerAction::Test};
@@ -168,7 +168,6 @@ struct StoreState {
                 workerActions.push_back(WorkerAction::Reinstall);
                 workerActions.push_back(WorkerAction::Uninstall);
             } else if (installed == WorkerInstallState::Installed || installed == WorkerInstallState::Different) {
-                if (!running && installed == WorkerInstallState::Installed) workerActions.push_back(WorkerAction::Start);
                 workerActions.push_back(WorkerAction::Replace);
             } else if (!running && (installed == WorkerInstallState::Missing || installed == WorkerInstallState::Unknown)) {
                 workerActions.push_back(WorkerAction::Install);
@@ -408,7 +407,7 @@ struct StoreState {
     // Any dialog is open: the controller talks to it, not to the screen below.
     bool dialogOpen() const
     {
-        return confirmWorkerRemoval || removeMenu || workerMenu || settings || sourceFilterPicker || sortPicker || debridPicker || downloadLocationPicker || installPicker ||
+        return workerStarting || confirmWorkerRemoval || removeMenu || workerMenu || settings || sourceFilterPicker || sortPicker || debridPicker || downloadLocationPicker || installPicker ||
                sourcePicker || keyboard;
     }
 
@@ -645,6 +644,7 @@ struct StoreState {
 
     void action(Action a)
     {
+        if (workerStarting || startWorker) return;
         dirty = true;
         notice.clear();
 

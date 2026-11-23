@@ -31,6 +31,7 @@ const char* const kNoController = "Connect a controller to browse the catalog.";
 constexpr int kWidth = 1920;
 constexpr int kHeight = 1080;
 constexpr uint64_t kFrameMicros = 1000000 / 60;
+constexpr uint64_t kDisplayFailureLimit = 3000000;
 
 // Makes sure `base` can hold downloads: creates its folders and writes a probe
 // file. `why` receives the result either way.
@@ -205,7 +206,7 @@ int Application::run()
     // The application paces its own frames (see GLContextPs4.cpp).
     uint64_t deadline = sceKernelGetProcessTime() + kFrameMicros;
     for (;;) {
-        frame();
+        if (!frame()) return 1;
         const uint64_t now = sceKernelGetProcessTime();
         if (now < deadline) {
             sceKernelUsleep(static_cast<unsigned int>(deadline - now));
@@ -214,10 +215,9 @@ int Application::run()
             deadline = now + kFrameMicros; // a slow frame: do not try to catch up
         }
     }
-    return 0;
 }
 
-void Application::frame()
+bool Application::frame()
 {
     if (textInput_.isOpen()) {
         pad_.ignoreUntilReleased();
@@ -227,10 +227,16 @@ void Application::frame()
     handleInput();
     handleKeyboard();
     handleRequests();
+    const Game* detail = ui_->detail ? ui_->variant() : nullptr;
+    const int gameId = detail ? detail->id : 0;
+    if (gameId != lastDetailGame_) {
+        if (gameId) NS_LOG_INFO("Opened game details: id=%d", gameId);
+        lastDetailGame_ = gameId;
+    }
     const uint64_t requestsDone = sceKernelGetProcessTime();
     syncWorkers();
     const uint64_t renderStart = sceKernelGetProcessTime();
-    render();
+    const bool displayReady = render();
     const uint64_t finished = sceKernelGetProcessTime();
     if (finished - started >= 1000000 && finished >= nextStallLog_) {
         nextStallLog_ = finished + 5000000;
@@ -239,6 +245,15 @@ void Application::frame()
                     static_cast<unsigned long long>((renderStart - requestsDone) / 1000),
                     static_cast<unsigned long long>((finished - renderStart) / 1000));
     }
+    if (displayReady) {
+        displayFailureSince_ = 0;
+    } else if (!displayFailureSince_) {
+        displayFailureSince_ = renderStart;
+    } else if (finished - displayFailureSince_ >= kDisplayFailureLimit) {
+        NS_LOG_ERROR("Display unavailable for three seconds. Closing NULL_store.");
+        return false;
+    }
+    return true;
 }
 
 void Application::handleInput()
@@ -353,7 +368,15 @@ void Application::handleRequests()
         resumeAttempted_ = true;
         downloadsReady_ = downloads_->start();
     }
-    if (ui.startWorker) { ui.startWorker = false; downloads_->setup(); }
+    if (ui.startWorker) {
+        ui.startWorker = false;
+        if (downloadsReady_) {
+            downloads_->setup();
+            ui.workerStarting = true;
+        } else {
+            ui.notice = "Could not start the download controller. Reopen NULL_store to retry.";
+        }
+    }
     if (ui.uninstallWorker) {
         ui.uninstallWorker = false;
         if (!installerReady_) installerReady_ = installer_->start();
@@ -471,6 +494,7 @@ void Application::syncWorkers()
         detailAttempts_.clear();
         refresh_->start(0, false, true);
     }
+    ui.workerStarting = downloadsReady_ && downloads_->startingWorker();
     if (ui.workerMenu) {
         if (!installerReady_) installerReady_ = installer_->start();
         const uint64_t now = sceKernelGetProcessTime();
@@ -481,7 +505,7 @@ void Application::syncWorkers()
         auto installed = installer_->workerInstallState();
         bool running = false, verified = false;
         downloads_->workerStatus(running, verified);
-        if (verified && (installed == WorkerInstallState::Installed || running)) installed = WorkerInstallState::Current;
+        if (verified && running) installed = WorkerInstallState::Current;
         if (ui.workerInstall != installed || ui.workerRunning != running ||
             ui.workerRemovalBusy != workerMenuWasBusy_) {
             ui.updateWorkerOptions(installed, running);
@@ -603,7 +627,7 @@ void Application::updateDetails(bool refreshed)
     }
 }
 
-void Application::render()
+bool Application::render()
 {
     // Animations advance by the time that really passed, capped so a long
     // stall does not make them jump.
@@ -616,15 +640,15 @@ void Application::render()
     art_->pump(static_cast<double>(now) / 1000000.0);
     renderer_.beginFrame(theme::kBackground);
     view_->draw(*ui_, dt);
-    renderer_.endFrame();
+    if (!renderer_.endFrame()) return false;
 
     if (!splashHidden_) {
-        // The system keeps its splash screen up until the application says
-        // its first frame is on screen.
-        splashHidden_ = true;
         const int32_t result = sceSystemServiceHideSplashScreen();
-        NS_LOG_INFO("First frame presented (hide splash: 0x%08X)", static_cast<unsigned>(result));
+        if (!displayFailureSince_ || result == 0)
+            NS_LOG_INFO("First frame accepted (hide splash: 0x%08X)", static_cast<unsigned>(result));
+        splashHidden_ = result == 0;
     }
+    return splashHidden_;
 }
 
 } // namespace ns

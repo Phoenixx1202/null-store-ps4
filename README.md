@@ -42,7 +42,7 @@ Only compatible, complete PKG files can be installed this way. Archives and spli
 The main app downloads while it is open. For transfers to continue after you close it:
 
 1. In **Downloads**, press **L3** and choose **Install included worker**. Confirm the package installation and wait for it to finish.
-2. In the same menu, choose **Start worker**. Wait for Downloads to show **Connected** before closing the store.
+2. In the same menu, choose **Start worker** and wait for Downloads to show **Connected** before closing the store. When the worker is stopped, start it from this menu again. The store connects to an already running matching worker when you reopen it.
 3. Close NULL_store. The service can continue the transfer while the PS4 remains awake and HEN stays active.
 
 Use **Downloads → L3 → Uninstall worker** to remove the background worker. The store keeps your queue and files. When the installed build matches the included worker, the menu also offers **Reinstall worker**. While the worker is running, choose **Stop worker** to return downloads to the open store.
