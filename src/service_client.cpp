@@ -2,13 +2,12 @@
 #include "download_paths.h"
 #include "catalog.h"
 #include <unistd.h>
-#include <ctime>
 #ifndef PORTAL_HOST
 #include "service_start_ps4.h"
 #include "network_ps4.h"
 #endif
 using namespace PortalIPC;
-ServiceClient::ServiceClient(std::string p):root(p){pthread_mutex_init(&mutex,0);pthread_cond_init(&changed,0);autoStart=!readFile(root+"/worker-enabled.txt").empty()&&readFile(root+"/service-stopped.txt").empty();status="Connecting to background service...";}
+ServiceClient::ServiceClient(std::string p):root(p){pthread_mutex_init(&mutex,0);pthread_cond_init(&changed,0);status="Connecting to background service...";}
 ServiceClient::~ServiceClient(){pthread_mutex_lock(&mutex);quitting=true;pthread_cond_signal(&changed);pthread_mutex_unlock(&mutex);if(started)pthread_join(thread,0);pthread_cond_destroy(&changed);pthread_mutex_destroy(&mutex);}
 bool ServiceClient::start(){if(started)return true;started=pthread_create(&thread,0,entry,this)==0;return started;}
 void* ServiceClient::entry(void*p){static_cast<ServiceClient*>(p)->loop();return 0;}
@@ -25,8 +24,8 @@ void ServiceClient::cancel(int id){pthread_mutex_lock(&mutex);if(connected){Writ
 bool ServiceClient::snapshot(uint64_t&stamp,std::vector<DownloadRow>&out){pthread_mutex_lock(&mutex);bool changed=queueReady&&stamp!=version;if(changed){stamp=version;out=jobs;}pthread_mutex_unlock(&mutex);return changed;}
 bool ServiceClient::takeNotice(std::string&out){pthread_mutex_lock(&mutex);bool ready=!notice.empty();if(ready){out=notice;notice.clear();}pthread_mutex_unlock(&mutex);return ready;}
 std::string ServiceClient::connectionStatus(){pthread_mutex_lock(&mutex);auto s=status;pthread_mutex_unlock(&mutex);return s;}
-void ServiceClient::setup(){pthread_mutex_lock(&mutex);setupRequested=true;setupBusy=true;autoStart=true;unlink((root+"/service-stopped.txt").c_str());pthread_cond_signal(&changed);pthread_mutex_unlock(&mutex);}
-void ServiceClient::stopService(bool quiet){pthread_mutex_lock(&mutex);stopRequested=true;quietStop=quiet;autoStart=false;writeFile(root+"/service-stopped.txt","Stopped by user\n");pthread_cond_signal(&changed);pthread_mutex_unlock(&mutex);}
+void ServiceClient::setup(){pthread_mutex_lock(&mutex);setupRequested=true;setupBusy=true;pthread_cond_signal(&changed);pthread_mutex_unlock(&mutex);}
+void ServiceClient::stopService(bool quiet){pthread_mutex_lock(&mutex);stopRequested=true;quietStop=quiet;pthread_cond_signal(&changed);pthread_mutex_unlock(&mutex);}
 void ServiceClient::workerStatus(bool& running, bool& current) {
     pthread_mutex_lock(&mutex);
     running = processRunning;
@@ -39,9 +38,9 @@ void ServiceClient::loop(){
     pthread_mutex_lock(&mutex);launchBusy=true;status="Checking installed background service...";pthread_mutex_unlock(&mutex);
     portalNetworkInit();
 #endif
-    unsigned verifiedPid=0;time_t lastLaunch=0;for(;;){pthread_mutex_lock(&mutex);if(quitting){pthread_mutex_unlock(&mutex);return;}bool setup=setupRequested,stop=stopRequested,quiet=quietStop,launch=autoStart;setupRequested=stopRequested=false;std::vector<std::string>pending;pending.swap(commands);pthread_mutex_unlock(&mutex);std::string error,reply;
+    unsigned verifiedPid=0;for(;;){pthread_mutex_lock(&mutex);if(quitting){pthread_mutex_unlock(&mutex);return;}bool setup=setupRequested,stop=stopRequested,quiet=quietStop;setupRequested=stopRequested=false;std::vector<std::string>pending;pending.swap(commands);pthread_mutex_unlock(&mutex);std::string error,reply;
 #ifndef PORTAL_HOST
-    if(setup){pthread_mutex_lock(&mutex);status="Setting up background service...";lastSetupError.clear();pthread_mutex_unlock(&mutex);bool ok=portalStartPackagedWorker(error);if(ok)writeFile(root+"/worker-enabled.txt","enabled\n");pthread_mutex_lock(&mutex);notice=ok?"Background service started. Downloads can continue after closing NULL_store.":error;lastSetupError=ok?std::string():error;pthread_mutex_unlock(&mutex);lastLaunch=time(0);pthread_mutex_lock(&mutex);setupBusy=false;pthread_mutex_unlock(&mutex);}
+    if(setup){pthread_mutex_lock(&mutex);status="Setting up background service...";lastSetupError.clear();pthread_mutex_unlock(&mutex);bool ok=portalStartPackagedWorker(error);pthread_mutex_lock(&mutex);notice=ok?"Background service started. Downloads can continue after closing NULL_store.":error;lastSetupError=ok?std::string():error;pthread_mutex_unlock(&mutex);pthread_mutex_lock(&mutex);setupBusy=false;pthread_mutex_unlock(&mutex);}
 #endif
 #ifdef PORTAL_HOST
     if(setup){pthread_mutex_lock(&mutex);setupBusy=false;notice="Native service installation is unavailable in the host test.";pthread_mutex_unlock(&mutex);}
@@ -59,9 +58,8 @@ void ServiceClient::loop(){
 if(!compatible)error="Background service version is incompatible. Stop it before updating.";}catch(const std::exception&e){ok=false;error=e.what();}}
 #ifndef PORTAL_HOST
     if(!ok)verifiedPid=0;
-    if(!ok&&launch&&!stop&&!setup&&!lastLaunch){std::string why;pthread_mutex_lock(&mutex);launchBusy=true;status="Starting installed background service...";pthread_mutex_unlock(&mutex);portalStartPackagedWorker(why);pthread_mutex_lock(&mutex);launchBusy=false;pthread_mutex_unlock(&mutex);lastLaunch=time(0);if(!why.empty())error=why;}
 #endif
-    pthread_mutex_lock(&mutex);launchBusy=false;processRunning=ok;if(ok)verifiedCurrent=compatible;connected=ok&&compatible;if(!connected)queueReady=false;status=connected?"Background service connected | "+runningBuild+(runningBuild=="1.1"?" | continues after closing":" | compatible worker | continues after closing"):!lastSetupError.empty()?"Service setup failed: "+lastSetupError+" | L3 to retry":!launch?"Background service stopped | L3 to start":error+" | L3 Service";pthread_mutex_unlock(&mutex);
+    pthread_mutex_lock(&mutex);launchBusy=false;processRunning=ok;if(ok)verifiedCurrent=compatible;connected=ok&&compatible;if(!connected)queueReady=false;status=connected?"Background service connected | "+runningBuild+(runningBuild=="1.1"?" | continues after closing":" | compatible worker | continues after closing"):!lastSetupError.empty()?"Service setup failed: "+lastSetupError+" | L3 to retry":ok?error+" | L3 Service":"Background service stopped | L3 to start";pthread_mutex_unlock(&mutex);
     if(ok&&compatible){
         for(auto&packet:pending){Writer w;w.bytes=packet;std::string why;Reader command(packet);auto op=command.u32();Game dispatchedGame;bool dispatchedDiscovery=op==DISCOVER;if(dispatchedDiscovery)dispatchedGame=game(command);bool success=call(w,reply,why);pthread_mutex_lock(&mutex);if(success&&dispatchedDiscovery&&pendingGame.id==dispatchedGame.id)sourceRequestSentGameId=dispatchedGame.id;if(!success){notice=op==ENQUEUE_FOLDER&&why=="Unsupported service command"?"Update the background service via Downloads > L3 to use this folder.":why;if(op==DISCOVER){sourceError=why;sourcesReady=true;discovering=false;}}else if(op==ENQUEUE||op==ENQUEUE_FOLDER){try{Reader r(reply);notice=r.string();}catch(...){notice="Refresh Downloads to check whether the request was accepted.";}}pthread_mutex_unlock(&mutex);}
         Writer queue;queue.u32(QUEUE);if(call(queue,reply,error)){try{Reader r(reply);auto count=r.u32();if(count>128)throw std::runtime_error("Service queue is too large");std::vector<DownloadRow>next;for(unsigned i=0;i<count;i++)next.push_back(row(r));r.end();pthread_mutex_lock(&mutex);jobs=next;queueReady=true;++version;pthread_mutex_unlock(&mutex);}catch(const std::exception&e){pthread_mutex_lock(&mutex);notice=e.what();pthread_mutex_unlock(&mutex);}}
@@ -71,5 +69,4 @@ if(!compatible)error="Background service version is incompatible. Stop it before
 }}
 
 bool ServiceClient::isConnected(){pthread_mutex_lock(&mutex);bool value=connected&&queueReady;pthread_mutex_unlock(&mutex);return value;}
-void ServiceClient::allowLaunch(bool value){pthread_mutex_lock(&mutex);autoStart=value;pthread_mutex_unlock(&mutex);}
 bool ServiceClient::setupInProgress(){pthread_mutex_lock(&mutex);bool value=setupBusy||setupRequested||launchBusy;pthread_mutex_unlock(&mutex);return value;}

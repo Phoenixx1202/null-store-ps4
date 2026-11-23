@@ -1,6 +1,7 @@
 #include "service_protocol.h"
 #include "service_setup_log.h"
 #include "service_start_ps4.h"
+#include "worker_package.h"
 #include <orbis/SystemService.h>
 #include <orbis/libkernel.h>
 
@@ -50,6 +51,14 @@ bool portalStartPackagedWorker(std::string& error) {
     }
     serviceSetupLog(true, "Packaged worker startup: NULL00003 build=%s", expected.c_str());
     if (!portalWorkerRunning()) {
+        const auto installed = workerPackageMatch();
+        if (installed != WorkerPackageMatch::Current) {
+            error = installed == WorkerPackageMatch::Different ?
+                "The installed worker is a different build. Install the included worker from Downloads." :
+                "Could not verify the installed worker. Use in-app downloads or install the included worker.";
+            serviceSetupLog(false, "Worker launch skipped: %s", error.c_str());
+            return false;
+        }
         LncAppParam params = {};
         params.size = sizeof params;
         params.user_id = static_cast<uint32_t>(-1);
@@ -63,7 +72,11 @@ bool portalStartPackagedWorker(std::string& error) {
                     "). Choose Install included Download Worker in Downloads.";
             return false;
         }
-        for (int i = 0; i < 150 && !portalWorkerRunning(); ++i) sceKernelUsleep(100000);
+        const uint64_t deadline = sceKernelGetProcessTime() + 15000000;
+        while (sceKernelGetProcessTime() < deadline) {
+            if (portalWorkerRunning()) break;
+            sceKernelUsleep(250000);
+        }
     }
     if (!portalWorkerRunning()) error = "Download Worker did not answer. Check service.log for startup details.";
     else if (!portalWorkerBuildCompatible(runningBuild()))

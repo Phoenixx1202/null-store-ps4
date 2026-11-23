@@ -13,7 +13,7 @@ DownloadController::DownloadController(std::string r,DownloadFetch f):root(r),fe
 DownloadController::~DownloadController(){pthread_mutex_lock(&mutex);quitting=true;pthread_mutex_unlock(&mutex);if(started)pthread_join(monitor,0);local.reset();if(owner>=0){flock(owner,LOCK_UN);close(owner);}pthread_mutex_destroy(&mutex);}
 bool DownloadController::start(){if(!remote.start())return false;started=pthread_create(&monitor,0,entry,this)==0;return started;}
 void* DownloadController::entry(void*p){static_cast<DownloadController*>(p)->loop();return 0;}
-bool DownloadController::ensureLocalLocked(bool report){if(local)return true;if(switching||remote.setupInProgress()){if(report)notice="Background service is starting. Retry when startup finishes.";return false;}remote.allowLaunch(false);int fd=open((root+"/queue-owner.lock").c_str(),O_RDWR|O_CREAT|O_NOFOLLOW|O_NONBLOCK,0666);if(fd<0){if(report)notice="Could not open the download queue lock.";return false;}struct stat info{};
+bool DownloadController::ensureLocalLocked(bool report){if(local)return true;if(switching||remote.setupInProgress()){if(report)notice="Background service is starting. Retry when startup finishes.";return false;}int fd=open((root+"/queue-owner.lock").c_str(),O_RDWR|O_CREAT|O_NOFOLLOW|O_NONBLOCK,0666);if(fd<0){if(report)notice="Could not open the download queue lock.";return false;}struct stat info{};
     if(portalDescriptorInfo(fd,&info)||!S_ISREG(info.st_mode)){close(fd);notice="Invalid queue lock.";return false;}
     if(info.st_uid==geteuid()&&(info.st_mode&0777)!=0666)fchmod(fd,0666);
     if(flock(fd,LOCK_EX|LOCK_NB)){close(fd);if(report)notice="Connecting to the current queue owner. Retry in a moment.";return false;}std::unique_ptr<DownloadManager> manager(new DownloadManager(root,fetch));if(!manager->start()){flock(fd,LOCK_UN);close(fd);localError=manager->startupError().empty()?"Could not start downloads in NULL_store.":manager->startupError();if(report)notice=localError;return false;}localError.clear();owner=fd;local=std::move(manager);localVersion=0;++version;return true;}
@@ -63,7 +63,20 @@ void DownloadController::remove(int id,bool deleteFiles){pthread_mutex_lock(&mut
 bool DownloadController::snapshot(uint64_t&stamp,std::vector<DownloadRow>&out){pthread_mutex_lock(&mutex);std::vector<DownloadRow>next;bool changed=local?local->snapshot(localVersion,next):remote.snapshot(remoteVersion,next);if(changed){visibleJobs.swap(next);++version;}bool result=changed||stamp!=version;if(result)out=visibleJobs;stamp=version;pthread_mutex_unlock(&mutex);return result;}
 bool DownloadController::takeNotice(std::string&out){pthread_mutex_lock(&mutex);bool found=!notice.empty();if(found){out=notice;notice.clear();}pthread_mutex_unlock(&mutex);return found||remote.takeNotice(out);}
 std::string DownloadController::connectionStatus(){pthread_mutex_lock(&mutex);auto status=switching?"Setting up optional background service; download progress is saved.":local?"In-app downloads | Keep NULL_store open. L3: optional background service.":!localError.empty()?localError:remote.connectionStatus();pthread_mutex_unlock(&mutex);return status;}
-void DownloadController::setup(){pthread_mutex_lock(&mutex);setupPending=true;switching=true;notice="Starting background service setup…";pthread_mutex_unlock(&mutex);}
+void DownloadController::setup() {
+    pthread_mutex_lock(&mutex);
+    if (!switching) {
+        setupPending = true;
+        switching = true;
+    }
+    pthread_mutex_unlock(&mutex);
+}
+bool DownloadController::startingWorker() {
+    pthread_mutex_lock(&mutex);
+    const bool busy = switching;
+    pthread_mutex_unlock(&mutex);
+    return busy;
+}
 bool DownloadController::stopForRemoval(std::string& error) {
     pthread_mutex_lock(&mutex);
     const bool busy = switching || setupPending || remote.setupInProgress();

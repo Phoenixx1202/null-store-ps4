@@ -2,6 +2,7 @@
 #include "../src/installer_ps4.cpp"
 #include <cassert>
 #include <iostream>
+#include <unistd.h>
 static int initCalls=0,registerCalls=0,startCalls=0,resumeCalls=0,initialCalls=0,termCalls=0,nativeCalls=0;
 static int initResult=0,registerResult=0,taskId=42,foregroundResult=0,foregroundUser=7,initialResult=0,initialUser=9,progressResult=0,startResult=0,resumeResult=0;
 static uint32_t bgftModuleResult=0;static int nativeResult=101,nativeStartResult=0;
@@ -66,6 +67,25 @@ static void resetInit(){
     mappedNames={"libSceLibcInternal"};
 }
 int main(){
+    {
+        char directory[] = "/tmp/nullstore-worker-check-XXXXXX";
+        assert(mkdtemp(directory));
+        const std::string installed = std::string(directory) + "/installed.pkg";
+        const std::string bundled = std::string(directory) + "/bundled.pkg";
+        std::string header(0x460, '\0');
+        header.replace(0, 4, "\x7f" "CNT");
+        header[0x440] = 1;
+        assert(writeFile(bundled, header));
+        assert(workerPackageMatch(installed.c_str(), bundled.c_str()) == WorkerPackageMatch::Unverified);
+        assert(writeFile(installed, header));
+        assert(workerPackageMatch(installed.c_str(), bundled.c_str()) == WorkerPackageMatch::Current);
+        header[0x440] = 2;
+        assert(writeFile(installed, header));
+        assert(workerPackageMatch(installed.c_str(), bundled.c_str()) == WorkerPackageMatch::Different);
+        assert(writeFile(installed, header.substr(0, 0x445)));
+        assert(workerPackageMatch(installed.c_str(), bundled.c_str()) == WorkerPackageMatch::Unverified);
+        assert(unlink(installed.c_str()) == 0 && unlink(bundled.c_str()) == 0 && rmdir(directory) == 0);
+    }
     {
         mappedNames.push_back("libSceAppInstUtil");
         std::string error;
