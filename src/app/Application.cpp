@@ -13,6 +13,8 @@
 
 #include "core/Log.h"
 #include "data_root.h"
+#include "data_migration.h"
+#include "service_start_ps4.h"
 #include "install_log.h"
 #include "network_ps4.h"
 #include "sources.h"
@@ -38,7 +40,8 @@ bool checkDownloadLocation(const std::string& data, const std::string& base, std
         why = "Invalid download location.";
         return false;
     }
-    if (base != data && mkdir(base.c_str(), 0777) && errno != EEXIST) {
+    const auto mount = downloadVolume(data, base);
+    if ((mount != data && !mountedUsbVolume(mount)) || !downloadDirectoryChain(base)) {
         why = "USB destination is unavailable or read-only (mkdir errno " + std::to_string(errno) + ").";
         return false;
     }
@@ -131,11 +134,13 @@ Application::~Application()
 
 bool Application::init()
 {
+    migrateStoreData(NULL_STORE_LEGACY_DATA_ROOT, NULL_STORE_DATA_ROOT);
     data_ = nullStoreDataRoot();
     mkdir(data_.c_str(), 0777);
     if (!loadStartupModules()) {
         return false;
     }
+    mkdir((data_ + "/game-sizes").c_str(), 0777);
     mkdir((data_ + "/covers").c_str(), 0777);
     log::setDirectory(data_.c_str());
     NS_LOG_INFO("NULL_store starting (data root %s)", data_.c_str());
@@ -159,7 +164,7 @@ bool Application::init()
     if (!loadSourcesIntoTable(config, error)) NS_LOG_ERROR("Source configuration: %s", error.c_str());
     ui_ = std::make_unique<StoreState>(kAssets, data_);
     downloads_ = std::make_unique<DownloadController>(data_, portalNetworkFetch);
-    downloadsReady_ = downloads_->start();
+
 
     if (!renderer_.init(createRenderBackend(), kWidth, kHeight, std::string(kAssets) + "/font.ttf")) {
         installLog("Startup display initialization failed");
@@ -176,7 +181,7 @@ bool Application::init()
     pad_.init();
 
     installer_ = std::make_unique<PackageInstaller>(data_, ps4InstallBackend());
-    installerReady_ = installer_->start();
+
 
     setup_ = std::make_unique<SourcesServer>(data_, portalNetworkFetch);
     if (setup_->start(8090, error) || setup_->start(0, error)) {
@@ -187,6 +192,7 @@ bool Application::init()
     }
 
     refresh_ = std::make_unique<CatalogRefresh>(data_);
+    displayedSources_ = sourceSnapshot();
     refresh_->start();
     return true;
 }
@@ -216,13 +222,23 @@ void Application::frame()
     if (textInput_.isOpen()) {
         pad_.ignoreUntilReleased();
     }
-    pad_.update(static_cast<double>(sceKernelGetProcessTime()) / 1000000.0);
-
+    const uint64_t started = sceKernelGetProcessTime();
+    pad_.update(static_cast<double>(started) / 1000000.0);
     handleInput();
     handleKeyboard();
     handleRequests();
+    const uint64_t requestsDone = sceKernelGetProcessTime();
     syncWorkers();
+    const uint64_t renderStart = sceKernelGetProcessTime();
     render();
+    const uint64_t finished = sceKernelGetProcessTime();
+    if (finished - started >= 1000000 && finished >= nextStallLog_) {
+        nextStallLog_ = finished + 5000000;
+        NS_LOG_WARN("Slow frame: input/requests=%llu ms updates=%llu ms render=%llu ms",
+                    static_cast<unsigned long long>((requestsDone - started) / 1000),
+                    static_cast<unsigned long long>((renderStart - requestsDone) / 1000),
+                    static_cast<unsigned long long>((finished - renderStart) / 1000));
+    }
 }
 
 void Application::handleInput()
@@ -251,7 +267,7 @@ void Application::handleInput()
     const Binding bindings[] = {
         { BtnUp, UP },          { BtnDown, DOWN },       { BtnLeft, LEFT },       { BtnRight, RIGHT },
         { BtnCircle, BACK },    { BtnTriangle, SEARCH }, { BtnSquare, FAVORITE }, { BtnL1, TAB_PREV },
-        { BtnR1, TAB_NEXT },    { BtnTouchpad, SORT },   { BtnL2, PAGE_PREV },    { BtnR2, PAGE_NEXT },
+        { BtnL3, MANAGE }, { BtnR1, TAB_NEXT },    { BtnTouchpad, SORT },   { BtnL2, PAGE_PREV },    { BtnR2, PAGE_NEXT },
     };
     for (const Binding& binding : bindings) {
         if (pad_.pressed(binding.button)) {
@@ -333,9 +349,34 @@ void Application::handleRequests()
 {
     StoreState& ui = *ui_;
 
+    if (!downloadsReady_ && ((splashHidden_ && !resumeAttempted_) || ui.downloadRequest || ui.enqueueRequest || ui.startWorker)) {
+        resumeAttempted_ = true;
+        downloadsReady_ = downloads_->start();
+    }
+    if (ui.startWorker) { ui.startWorker = false; downloads_->setup(); }
+    if (ui.uninstallWorker) {
+        ui.uninstallWorker = false;
+        if (!installerReady_) installerReady_ = installer_->start();
+        if (!installerReady_ || !downloadsReady_) ui.notice = "Download or installer thread unavailable. Reopen the store.";
+        else if (installer_->canRemoveWorker(ui.notice) && downloads_->stopForRemoval(ui.notice)) {
+            reinstallAfterRemoval_ = ui.reinstallWorker;
+            ui.workerRemovalBusy = true;
+            workerStopDeadline_ = sceKernelGetProcessTime() + 30000000;
+            ui.notice = "Stopping the worker and returning downloads to the store…";
+        }
+    }
+    if (ui.stopWorker) { ui.stopWorker = false; downloads_->stopService(); }
+    if (ui.probeTorrent) {
+        ui.probeTorrent = false;
+        Game game;
+        game.id = 1999000001;
+        game.title = "Big Buck Bunny connection test";
+        game.url = "https://webtorrent.io/torrents/big-buck-bunny.torrent";
+        downloads_->enqueue(game, {"One verified piece", game.url}, ui.notice);
+    }
     if (ui.cancelRequest) {
         ui.cancelRequest = false;
-        downloads_->remove(ui.cancelJob, true); // stops the transfer, then deletes its files
+        downloads_->remove(ui.cancelJob, ui.removeFiles); // stops the transfer, then deletes its files
     }
 
     if (ui.refreshRequest) {
@@ -362,11 +403,12 @@ void Application::handleRequests()
         } else {
             ui.notice = why;
         }
-        ui.syncDownloadLocation();
+
     }
 
     if (ui.installScanRequest) {
         ui.installScanRequest = false;
+        if (!installerReady_) installerReady_ = installer_->start();
         if (installerReady_) {
             installer_->scan(ui.installJob, ui.installPath);
         } else {
@@ -377,7 +419,10 @@ void Application::handleRequests()
     if (ui.installSubmitRequest) {
         ui.installSubmitRequest = false;
         if (ui.installSelected >= 0 && ui.installSelected < int(ui.packages.size())) {
-            installer_->submit(ui.packages[ui.installSelected].path);
+            if (ui.installJob == 0 && portalWorkerRunning())
+                ui.installError = "The worker is running. Finish its downloads and stop it before updating.";
+            else
+                installer_->submit(ui.packages[ui.installSelected].path);
         }
     }
 
@@ -397,12 +442,78 @@ void Application::syncWorkers()
 {
     StoreState& ui = *ui_;
 
+    if (ui.sourceFilterPicker && ui.setupURL.empty() && setup_->port() > 0) {
+        const auto now = sceKernelGetProcessTime();
+        if (now >= nextSetupAddressCheck_) {
+            nextSetupAddressCheck_ = now + 5000000;
+            const auto address = localLanAddress();
+            if (!address.empty()) ui.setSetupURL(setup_->urlFor(address));
+        }
+    }
+    const auto table = sourceSnapshot();
+    if (table != displayedSources_) {
+        const auto* previous = displayedSources_->at(ui.sourceFilter);
+        ui.sourceFilter = previous ? table->indexForId(previous->id) : 0;
+        ui.sourceChoice = ui.sourceFilter;
+        for (const auto& item : table->items) {
+            if (item.kind != SourceKind::Custom) continue;
+            const auto* old = displayedSources_->at(displayedSources_->indexForId(item.id));
+            if (!old || sourceToJSON(*old) != sourceToJSON(item)) {
+                const auto path = providerCachePath(data_, table->indexForId(item.id), *table);
+                unlink((path + ".time").c_str());
+            }
+        }
+        displayedSources_ = table;
+        ui.games = mergedCatalog(data_ + "/catalog.tsv", *sourceSnapshot(), std::string(kAssets) + "/catalog.tsv");
+        ui.shareTitleIds();
+        ui.filter();
+        sizeAttempts_.clear();
+        detailAttempts_.clear();
+        refresh_->start(0, false, true);
+    }
+    if (ui.workerMenu) {
+        if (!installerReady_) installerReady_ = installer_->start();
+        const uint64_t now = sceKernelGetProcessTime();
+        if (installerReady_ && now >= nextWorkerCheck_) {
+            nextWorkerCheck_ = now + 2000000;
+            installer_->checkWorker();
+        }
+        auto installed = installer_->workerInstallState();
+        bool running = false, verified = false;
+        downloads_->workerStatus(running, verified);
+        if (verified && (installed == WorkerInstallState::Installed || running)) installed = WorkerInstallState::Current;
+        if (ui.workerInstall != installed || ui.workerRunning != running ||
+            ui.workerRemovalBusy != workerMenuWasBusy_) {
+            ui.updateWorkerOptions(installed, running);
+            workerMenuWasBusy_ = ui.workerRemovalBusy;
+        }
+    } else {
+        nextWorkerCheck_ = 0;
+    }
     const std::string connection = downloads_->connectionStatus();
     if (connection != ui.serviceStatus) {
         ui.serviceStatus = connection;
     }
     downloads_->takeNotice(ui.notice);
-    installer_->snapshot(installVersion_, ui.packages, ui.installLoading, ui.installError);
+    if (ui.workerRemovalBusy) {
+        std::string error;
+        bool running = false, verified = false;
+        downloads_->workerStatus(running, verified);
+        if (workerStopDeadline_ && !running && downloads_->ownsQueue()) {
+            workerStopDeadline_ = 0;
+            ui.notice = "Uninstalling download worker…";
+            installer_->removeWorker();
+        } else if (workerStopDeadline_ && sceKernelGetProcessTime() >= workerStopDeadline_) {
+            workerStopDeadline_ = 0;
+            ui.workerRemovalBusy = false;
+            ui.notice = "Could not return downloads to the store. Worker removal cancelled.";
+        } else if (installer_->takeWorkerRemoval(error)) {
+            ui.workerRemovalBusy = false;
+            if (error.empty() && reinstallAfterRemoval_) ui.openWorkerInstaller();
+            ui.notice = error.empty() ? "Download worker removed. Downloads continue while the store is open." : error;
+        }
+    }
+    if (installerReady_) installer_->snapshot(installVersion_, ui.packages, ui.installLoading, ui.installError);
 
     std::vector<TorrentLink> found;
     std::string sourceTitle, sourceError;
@@ -431,6 +542,10 @@ void Application::syncWorkers()
     covers_->pollNames(ui.officialNames);
 
     refresh_->pollStatus(ui.status);
+    const Game* selected = ui.current();
+    const int selectedId = selected ? selected->id : -1;
+    const Game* variant = ui.detail ? ui.variant() : nullptr;
+    const int variantId = variant ? variant->id : -1;
     const bool refreshed = refresh_->pollCatalogue(ui.games);
     // Title IDs learnt in the background regroup the catalogue the next time
     // the list is rebuilt (search, sort, tab...): applying them now would move
@@ -439,7 +554,52 @@ void Application::syncWorkers()
         ui.shareTitleIds();
     }
     if (refreshed) {
-        ui.filter();
+        ui.filter(false, variantId > 0 ? variantId : selectedId);
+        if (ui.detail) {
+            const auto* group = ui.currentGroup();
+            ui.variantSelected = 0;
+            if (group) {
+                for (size_t i = 0; i < group->size(); ++i)
+                    if (ui.games[(*group)[i]].id == variantId) ui.variantSelected = static_cast<int>(i);
+            }
+        }
+    }
+    updateDetails(refreshed);
+}
+
+void Application::updateDetails(bool refreshed)
+{
+    auto& ui = *ui_;
+    std::string url;
+    ListingDetails facts;
+    if (lookup_.take(url, facts) && !facts.empty()) {
+        auto& previous = ui.listingDetails[url];
+        if (facts.size.empty()) facts.size = previous.size;
+        previous = std::move(facts);
+        refreshed = true;
+    }
+    if (refreshed) {
+        for (auto& game : ui.games) {
+            auto it = ui.listingDetails.find(game.url);
+            if (it != ui.listingDetails.end() && !it->second.size.empty()) game.size = it->second.size;
+        }
+    }
+    const auto now = sceKernelGetProcessTime();
+    if (lookup_.busy() || now < nextLookup_ || ui.tab == TAB_DOWNLOADS || ui.dialogOpen()) return;
+    nextLookup_ = now + 500000;
+    if (ui.detail) {
+        const auto* game = ui.variant();
+        if (game && !detailAttempts_.count(game->url) && lookup_.start(*game, true, data_ + "/game-sizes"))
+            detailAttempts_.insert(game->url);
+        return;
+    }
+    const int start = ui.selected / StoreState::kGridPage * StoreState::kGridPage;
+    for (int i = start; i < std::min(start + StoreState::kGridPage, int(ui.visible.size())); ++i) {
+        const Game& game = ui.games[ui.visible[i]];
+        if (!sizeMB(game.size) && !sizeAttempts_.count(game.url)) {
+            if (lookup_.start(game, false, data_ + "/game-sizes")) sizeAttempts_.insert(game.url);
+            break;
+        }
     }
 }
 

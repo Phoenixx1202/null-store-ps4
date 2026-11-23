@@ -1,8 +1,10 @@
 #include "installer.h"
+#include "mapped_module.h"
 #include "install_log.h"
 #include "bgft_abi.h"
 #include <orbis/Sysmodule.h>
 #include <orbis/UserService.h>
+#include <orbis/AppInstUtil.h>
 #ifndef PORTAL_HOST
 #include <orbis/libkernel.h>
 #else
@@ -11,6 +13,7 @@ extern "C" int32_t sceKernelGetModuleList(uint32_t*,size_t,size_t*);
 extern "C" int32_t sceKernelGetModuleInfo(uint32_t,OrbisKernelModuleInfo*);
 extern "C" uint32_t sceKernelLoadStartModule(const char*,size_t,const void*,uint32_t,void*,void*);
 extern "C" const char* sceKernelGetFsSandboxRandomWord();
+extern "C" int32_t sceKernelDlsym(int32_t,const char*,void**);
 #endif
 #include <cstdlib>
 #include <cstring>
@@ -30,18 +33,6 @@ static std::string apiError(const char*what,int code){installLog("%s: 0x%08X",wh
 static void finalize(){
     if(bgftReady){int r=bgftTerm();installLog("sceBgftServiceTerm: 0x%08X",(unsigned)r);bgftReady=false;}
     free(heap);heap=nullptr;
-}
-static int loadedModule(const char*path){
-    static_assert(sizeof(OrbisKernelModuleInfo)==352,"PS4 module-info ABI");
-    uint32_t handles[256]={};size_t count=0;int r=sceKernelGetModuleList(handles,256,&count);
-    if(r){installLog("Installer module inventory failed: 0x%08X",(unsigned)r);return -1;}
-    std::string target=path;auto slash=target.find_last_of('/');if(slash!=std::string::npos)target=target.substr(slash+1);auto dot=target.find('.');if(dot!=std::string::npos)target.resize(dot);
-    for(size_t i=0;i<std::min(count,size_t(256));i++){
-        OrbisKernelModuleInfo info={};info.size=sizeof info;if(sceKernelGetModuleInfo(handles[i],&info))continue;
-        info.name[sizeof info.name-1]=0;std::string name=info.name;
-        auto end=name.find_last_of('/');if(end!=std::string::npos)name=name.substr(end+1);end=name.find('.');if(end!=std::string::npos)name.resize(end);
-        if(name==target){installLog("Installer reusing mapped module %s: handle=0x%08X",target.c_str(),handles[i]);return (int)handles[i];}
-    }return -1;
 }
 static bool loadNativeModule(const char*name,const char*path,std::string&error){
     // Match flatz/module.c: titles see system libraries through a randomized
@@ -75,7 +66,7 @@ static bool loadModule(OrbisSysModuleInternal id,const char*name,const char*path
 }
 static bool initialize(std::string&error){
     if(bgftReady)return true;
-    installLog("NULL_store 1.0 local PKG installer: opening public BGFT session (module ready=%d, SELF installer auth configured)",moduleReady);
+    installLog("NULL_store 1.1 local PKG installer: opening public BGFT session (module ready=%d, SELF installer auth configured)",moduleReady);
     if(!moduleReady){
         if(!loadModule(ORBIS_SYSMODULE_INTERNAL_BGFT,"BGFT","/system/common/lib/libSceBgft.sprx",error))return false;
         moduleReady=true;
@@ -137,4 +128,100 @@ static bool pollTask(int id,int&percent,bool&complete,std::string&error){
     }
     return true;
 }
-InstallBackend ps4InstallBackend(){return {registerTask,startTask,pollTask,resumeTask};}
+template<class Function>
+static bool appInstSymbol(int handle, const char* name, Function& function, std::string& error) {
+    void* symbol = nullptr;
+    const int result = sceKernelDlsym(handle, name, &symbol);
+    if (result || !symbol) {
+        error = apiError(name, result);
+        return false;
+    }
+    function = reinterpret_cast<Function>(symbol);
+    return true;
+}
+
+static constexpr const char* kWorkerTitle = "NULL00003";
+
+static int appInstallModule(std::string& error) {
+    int handle = loadedModule("libSceAppInstUtil");
+    if (handle < 0) {
+        const int result = sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_APP_INST_UTIL);
+        if (result) { error = apiError("Worker install module unavailable", result); return -1; }
+        handle = loadedModule("libSceAppInstUtil");
+    }
+    if (handle < 0) error = "PS4 could not open the worker install module.";
+    return handle;
+}
+
+static bool workerPackageDigest(const char* path, unsigned char (&digest)[32]) {
+    FILE* file = fopen(path, "rb");
+    if (!file) return false;
+    unsigned char magic[4];
+    // The PKG header holds a digest of the PFS payload. Builds share an app version.
+    const bool read = fread(magic, 1, sizeof magic, file) == sizeof magic &&
+        memcmp(magic, "\x7f" "CNT", sizeof magic) == 0 && fseek(file, 0x440, SEEK_SET) == 0 &&
+        fread(digest, 1, sizeof digest, file) == sizeof digest;
+    fclose(file);
+    return read && std::any_of(digest, digest + sizeof digest, [](unsigned char byte) { return byte != 0; });
+}
+
+static WorkerInstallState checkDownloadWorker() {
+    std::string error;
+    const int handle = appInstallModule(error);
+    if (handle < 0) return WorkerInstallState::Unknown;
+
+    decltype(&sceAppInstUtilInitialize) init;
+    decltype(&sceAppInstUtilTerminate) term;
+    decltype(&sceAppInstUtilAppExists) exists;
+    if (!appInstSymbol(handle, "sceAppInstUtilInitialize", init, error) ||
+        !appInstSymbol(handle, "sceAppInstUtilTerminate", term, error) ||
+        !appInstSymbol(handle, "sceAppInstUtilAppExists", exists, error) || init() != 0)
+        return WorkerInstallState::Unknown;
+
+    int32_t present = 0;
+    const int result = exists(kWorkerTitle, &present);
+    term();
+    if (result != 0) return WorkerInstallState::Unknown;
+    if (!present) return WorkerInstallState::Missing;
+
+    unsigned char installed[32], bundled[32];
+    if (!workerPackageDigest("/user/app/NULL00003/app.pkg", installed) ||
+        !workerPackageDigest("/app0/assets/worker/download-worker.pkg", bundled))
+        return WorkerInstallState::Installed;
+    return memcmp(installed, bundled, sizeof installed) == 0 ?
+        WorkerInstallState::Current : WorkerInstallState::Different;
+}
+
+static bool uninstallDownloadWorker(std::string& error) {
+    constexpr const char* content = "IV0000-NULL00003_00-NULLSTOREWORKER0";
+    const int handle = appInstallModule(error);
+    if (handle < 0) return false;
+
+    decltype(&sceAppInstUtilInitialize) init;
+    decltype(&sceAppInstUtilTerminate) term;
+    decltype(&sceAppInstUtilAppExists) exists;
+    decltype(&sceAppInstUtilAppIsInInstalling) installing;
+    decltype(&sceAppInstUtilAppUnInstall) remove;
+    if (!appInstSymbol(handle, "sceAppInstUtilInitialize", init, error) ||
+        !appInstSymbol(handle, "sceAppInstUtilTerminate", term, error) ||
+        !appInstSymbol(handle, "sceAppInstUtilAppExists", exists, error) ||
+        !appInstSymbol(handle, "sceAppInstUtilAppIsInInstalling", installing, error) ||
+        !appInstSymbol(handle, "sceAppInstUtilAppUnInstall", remove, error)) return false;
+
+    int result = init();
+    if (result) { error = apiError("Could not initialize worker removal", result); return false; }
+    int32_t present = 0;
+    if (installing(content)) {
+        error = "Wait for the worker installation to finish before removing it.";
+    } else if ((result = exists(kWorkerTitle, &present)) != 0) {
+        error = apiError("Could not check the installed worker", result);
+    } else if (present) {
+        if ((result = remove(kWorkerTitle)) != 0) error = apiError("PS4 could not uninstall the worker", result);
+        else if ((result = exists(kWorkerTitle, &present)) != 0) error = apiError("Could not verify worker removal", result);
+        else if (present) error = "PS4 accepted removal. The worker is still listed. Check Notifications.";
+    }
+    term();
+    installLog("Download Worker uninstall (%s): %s", kWorkerTitle, error.empty() ? "confirmed absent" : error.c_str());
+    return error.empty();
+}
+InstallBackend ps4InstallBackend(){return {registerTask,startTask,pollTask,resumeTask,uninstallDownloadWorker,checkDownloadWorker};}

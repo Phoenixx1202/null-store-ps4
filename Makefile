@@ -5,7 +5,7 @@
 #   make                 store package      build/$(CONTENT_ID).pkg
 #   make eboot           just the store executable (eboot.bin)
 #   make service-package optional Background Service setup package
-#   make test-package    store package without the service helper module
+#   make test-package    store package with the optional download worker embedded
 #   make preview         PC previews of every screen -> build/preview/*.png
 #   make test            host checks (macOS / Linux)
 #   make validate        inspect the built package
@@ -63,11 +63,6 @@ PAID := 0x3100000000000002
 # not have (src/sony_art.h). Its crashes came from libSceHttp, which no
 # download uses any more (src/network_bypass.cpp).
 SONY_ART ?= 1
-DAEMON_PAID := 0x3100000000000002
-# 1 asks the PlayStation Store for the icons and names orbispatches.com does
-# not have (src/sony_art.h). Its crashes came from libSceHttp, which no
-# download uses any more (src/network_bypass.cpp).
-SONY_ART ?= 1
 INSTALLER_AUTH_INFO := $(shell cat tools/installer-auth.hex)
 
 # --- PS4 flags ------------------------------------------------------------------
@@ -94,11 +89,11 @@ GFX_C := $(wildcard third_party/piglet_shaders/*.c) $(WEBP_C)
 # The store: application loop, screens, input.
 STORE_SRC := src/sources_server.cpp src/qrcodegen.c src/main.cpp $(wildcard src/app/*.cpp src/input/*.cpp) $(filter-out src/ui/Widgets.cpp,$(wildcard src/ui/*.cpp)) \
              src/platform/ps4/PadPs4.cpp \
-             src/text_input_ps4.cpp src/download_controller.cpp src/service_client.cpp src/installer.cpp \
+             src/text_input_ps4.cpp src/download_controller.cpp src/service_client.cpp src/packaged_worker_launch.cpp src/installer.cpp \
              src/installer_ps4.cpp
 # Shared with the service daemon and the setup application.
-ENGINE_SRC := src/download_manager.cpp src/debrid.cpp src/service_protocol.cpp src/service_start_ps4.cpp
-SETUP_SRC := src/service_installer.cpp src/service_start_ps4.cpp src/service_protocol.cpp src/network_ps4.cpp
+ENGINE_SRC := src/download_manager.cpp src/debrid.cpp src/service_protocol.cpp
+SETUP_SRC := src/service_installer.cpp src/installer.cpp src/installer_ps4.cpp src/packaged_worker_launch.cpp src/service_protocol.cpp src/network_ps4.cpp
 DAEMON_SRC := src/service_main.cpp src/service_server.cpp src/network_ps4.cpp src/service_log.cpp
 # The PlayStation Store DNS-bypass client (src/network_bypass.cpp) and its
 # vendored transport: BearSSL TLS and the net/Socket helpers, from
@@ -131,8 +126,10 @@ check-toolchain:
 	@grep -q "ORBIS_SYSMODULE_INTERNAL_PAD" "$(TOOLCHAIN)/include/orbis/_types/sysmodule.h" || { echo "This OpenOrbis toolchain is too old (no ORBIS_SYSMODULE_INTERNAL_PAD): $(TOOLCHAIN)"; exit 1; }
 
 # --- Compile ----------------------------------------------------------------------
-build/trusted_roots.h build/sony_ca_bundle.h: tools/embed_trust.py assets/service/cacert.pem
+build/trusted_roots.h: tools/embed_trust.py assets/service/cacert.pem
 	$(PYTHON) tools/embed_trust.py
+build/sony_ca_bundle.h: build/trusted_roots.h
+	@test -s $@ || $(PYTHON) tools/embed_trust.py
 
 $(OBJ)/%.cpp.o: %.cpp Makefile | check-toolchain build/trusted_roots.h build/sony_ca_bundle.h
 	@mkdir -p $(dir $@)
@@ -169,15 +166,29 @@ build/nullstore.elf: $(STORE_OBJS) tools/link_ps4.py
 eboot.bin: build/nullstore.elf tools/installer-auth.hex Makefile
 	$(FSELF) -in=$< -out=build/nullstore.oelf --eboot $@ --ptype fake --paid $(PAID) --authinfo $(INSTALLER_AUTH_INFO)
 
-# --- Background service (daemon) ------------------------------------------------------
-build/portal-service.elf: $(DAEMON_OBJS) tools/link_ps4.py
+# A worker is an independently installed application using ordinary app permissions.
+WORKER_PKG := build/IV0000-NULL00003_00-NULLSTOREWORKER0.pkg
+WORKER_ID_INPUTS := $(filter-out build/daemon/src/service_server.cpp.o,$(DAEMON_OBJS)) src/service_server.cpp src/service_protocol.h Makefile tools/package_worker.py
+build/daemon/src/service_main.cpp.o: PS4_CXXFLAGS += -DNULLSTORE_PACKAGED_WORKER
+build/daemon/src/service_server.cpp.o: build/service_build_id.h
+build/service_build_id.h: tools/service_build_id.py $(WORKER_ID_INPUTS)
+	$(PYTHON) $< $(WORKER_ID_INPUTS)
+assets/service/build-id.txt: build/service_build_id.h
+	@test -s $@ || $(PYTHON) tools/service_build_id.py $(WORKER_ID_INPUTS)
+build/packaged-worker.elf: $(DAEMON_OBJS) tools/link_ps4.py
 	$(PS4_LINK) $(DAEMON_OBJS) $(LIBS) -o $@
-
-assets/service/eboot.bin: build/portal-service.elf
-	$(FSELF) -in=$< -out=build/portal-service.oelf --eboot $@ -ptype fake --paid $(DAEMON_PAID)
-
-assets/service/daemon.sfo: tools/service_bundle.py $(RUNTIME_MODULES)
-	$(PYTHON) tools/service_bundle.py
+build/packaged-worker.bin: build/packaged-worker.elf
+	$(FSELF) -in=$< -out=build/packaged-worker.oelf --eboot $@ --paid 0x3800000000000011
+$(WORKER_PKG): build/packaged-worker.bin assets/service/build-id.txt $(ICONS) $(RUNTIME_MODULES) $(SERVICE_NOTICES) tools/package_worker.py tools/package.py
+	PKGTOOL="$(PKGTOOL)" $(PYTHON) tools/package_worker.py
+assets/worker/download-worker.pkg: $(WORKER_PKG)
+	@mkdir -p $(@D)
+	cp $< $@
+assets/worker/build-id.txt: assets/service/build-id.txt
+	@mkdir -p $(@D)
+	cp $< $@
+WORKER_PAYLOAD := assets/worker/download-worker.pkg assets/worker/build-id.txt
+worker-package: $(WORKER_PKG)
 
 # --- Package ----------------------------------------------------------------------
 # Icons are committed; `make icons` redraws them from the bag artwork.
@@ -192,35 +203,25 @@ sce_module/%.prx:
 	@test -f "$(TOOLCHAIN)/samples/piglet/sce_module/$*.prx" || { echo "Missing $@: copy it from an OpenOrbis toolchain (see BUILDING.md)"; exit 1; }
 	cp "$(TOOLCHAIN)/samples/piglet/sce_module/$*.prx" $@
 
-# The Itemzflow compatibility module of the background service is not part of
-# this repository.
-assets/service/compat-jb.prx assets/service/COMPAT-PROVENANCE.txt:
-	@echo "Missing $@: supply it as described in BUILDING.md (Assets and package build)."; exit 1
-
 sce_sys/param.sfo: tools/package.py
 	$(PYTHON) tools/package.py sfo
 
-assets/covers.pack assets/covers.idx: tools/pack_covers.py $(wildcard assets/covers/*.jpg)
+assets/covers.idx: assets/covers.pack
+	@test -f $@ || $(PYTHON) tools/pack_covers.py
+assets/covers.pack: resources/catalog/covers.pack resources/catalog/covers.idx tools/pack_covers.py $(wildcard assets/covers/*.jpg)
 	$(PYTHON) tools/pack_covers.py
 
-pkg.gp4: $(ICONS) $(SERVICE_NOTICES) $(RUNTIME_MODULES) assets/covers.pack assets/covers.idx \
-         assets/brand/nullstore-bag.png assets/service/compat-jb.prx \
-         assets/service/COMPAT-PROVENANCE.txt assets/service/eboot.bin assets/service/daemon.sfo eboot.bin \
+pkg.gp4: assets/catalog.tsv $(ICONS) $(SERVICE_NOTICES) $(RUNTIME_MODULES) assets/covers.pack assets/covers.idx \
+         assets/brand/nullstore-bag.png $(WORKER_PAYLOAD) eboot.bin \
          sce_sys/param.sfo tools/package.py assets/font.ttf $(wildcard assets/covers/*.jpg)
 	$(PYTHON) tools/package.py gp4
 
 build/$(CONTENT_ID).pkg: pkg.gp4
 	$(PYTHON) tools/package.py build $(PKGTOOL)
 
-# Store package for trying a build on a console when the background service's
-# helper module is not at hand: everything works except setting that service up.
-TEST_PKG := build/NULL_store-test-no-service.pkg
-test-package: $(ICONS) $(SERVICE_NOTICES) $(RUNTIME_MODULES) assets/covers.pack assets/covers.idx \
-              assets/service/eboot.bin assets/service/daemon.sfo eboot.bin sce_sys/param.sfo
-	$(PYTHON) tools/package.py gp4
-	$(PYTHON) tools/package.py build $(PKGTOOL)
-	mv build/$(CONTENT_ID).pkg $(TEST_PKG)
-	rm -f pkg.gp4
+TEST_PKG := build/NULL_store-test.pkg
+test-package: build/$(CONTENT_ID).pkg
+	cp $< $(TEST_PKG)
 	$(PKGTOOL) pkg_validate $(TEST_PKG)
 
 validate: build/$(CONTENT_ID).pkg
@@ -235,8 +236,7 @@ build/service-installer.elf: $(SETUP_OBJS) tools/link_ps4.py
 build/service-installer.bin: build/service-installer.elf tools/installer-auth.hex
 	$(FSELF) -in=$< -out=build/service-installer.oelf --eboot $@ --paid 0x3800000000000011 --authinfo $(INSTALLER_AUTH_INFO)
 
-build/$(SERVICE_CONTENT_ID).pkg: $(ICONS) $(SERVICE_NOTICES) build/service-installer.bin assets/service/eboot.bin \
-        assets/service/daemon.sfo assets/service/compat-jb.prx tools/package_service_installer.py tools/package.py
+build/$(SERVICE_CONTENT_ID).pkg: $(ICONS) $(SERVICE_NOTICES) build/service-installer.bin $(WORKER_PAYLOAD) tools/package_service_installer.py tools/package.py
 	PKGTOOL=$(PKGTOOL) $(PYTHON) tools/package_service_installer.py
 
 service-package: build/$(SERVICE_CONTENT_ID).pkg
@@ -262,19 +262,25 @@ ifeq ($(HOST_OS),windows)
 endif
 PREVIEW_HEADERS := $(wildcard src/*.h src/ui/*.h src/graphics/*.h src/core/*.h tools/win_compat/*.h tools/win_compat/sys/*.h)
 
+HOST_TARGET := $(shell $(HOST_CC) -dumpmachine)
+HOST_X86 := $(filter x86_64% i386% i686% amd64%,$(HOST_TARGET))
 WEBP_HOST_OBJS := $(patsubst %.c,build/host/%.o,$(WEBP_C))
 # With the Microsoft toolchain libwebp turns its SSE4.1 paths on by itself: those
 # files need the instruction set enabled (the code still checks the CPU first).
-build/host/%.o: %.c
+HOST_WEBP_CONFIG := build/host/webp-config/src/webp/config.h
+$(HOST_WEBP_CONFIG):
 	@mkdir -p $(dir $@)
-	@$(HOST_CC) -O2 -w -Ithird_party/libwebp $(HOST_SDK_FLAGS) $(if $(findstring sse41,$<),-msse4.1,) -c $< -o $@
+	@echo '/* Portable C decoder for host previews. */' > $@
+build/host/%.o: %.c $(HOST_WEBP_CONFIG) Makefile
+	@mkdir -p $(dir $@)
+	@$(HOST_CC) -O2 -w -DHAVE_CONFIG_H -Ibuild/host/webp-config -Ithird_party/libwebp $(HOST_SDK_FLAGS) $(if $(and $(HOST_X86),$(findstring sse41,$<)),-msse4.1,) -c $< -o $@
 
-build/preview$(EXE): $(PREVIEW_SRC) $(PREVIEW_HEADERS) $(WEBP_HOST_OBJS)
+build/preview-tool$(EXE): $(PREVIEW_SRC) $(PREVIEW_HEADERS) $(WEBP_HOST_OBJS)
 	@mkdir -p build
 	$(HOST_CXX) $(PREVIEW_FLAGS) $(PREVIEW_SRC) $(WEBP_HOST_OBJS) -o $@
 
-preview: build/preview$(EXE)
-	./build/preview$(EXE) all
+preview: build/preview-tool$(EXE)
+	./build/preview-tool$(EXE) all
 
 clean:
 	rm -rf build eboot.bin pkg.gp4

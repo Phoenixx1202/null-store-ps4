@@ -1,10 +1,5 @@
 #pragma once
-// Runtime source table. NULL_store ships no catalogue and no built-in game
-// sites: every source comes from sources.json, which the user edits from the
-// console or from the phone setup page.
-//
-// A source declares where its listing lives and how its cards look. The app
-// contains no per-site parsers; the shape below is the whole vocabulary.
+// The store and download worker use the same catalogue source definitions.
 #include <string>
 #include <vector>
 #include <memory>
@@ -28,6 +23,8 @@ struct SourceShape {
     std::vector<std::string> blocked;
 };
 
+enum class SourceKind { Custom, PS4Torrent, GameTorrent, LoveGames };
+
 struct Source {
     std::string id;                        // slug, used for cache file names
     std::string label;                     // shown in the UI
@@ -37,6 +34,7 @@ struct Source {
     int maxPages = 20;
     bool enabled = true;
     SourceShape shape;
+    SourceKind kind = SourceKind::Custom;
 };
 
 class SourceTable {
@@ -54,9 +52,40 @@ public:
     bool empty() const { return items.empty(); }
 };
 
+inline const SourceTable& builtInSources() {
+    static const SourceTable defaults = [] {
+        SourceTable table;
+        auto add = [&](SourceKind kind, const char* id, const char* label, const char* base,
+                       const char* first, const char* later) {
+            Source s;
+            s.kind = kind;
+            s.id = id;
+            s.label = label;
+            s.base = base;
+            s.listing = first;
+            s.pageListing = later;
+            s.maxPages = 500;
+            s.shape.imageAttributes = {"data-src", "src"};
+            s.shape.linkClasses = {"dl__btn", "download_button_like_stat"};
+            s.shape.linkMarkers = {"do=download", ".torrent"};
+            s.shape.blocked = {"data-gt-gated=1", "data-gt-allowed=0"};
+            table.items.push_back(s);
+        };
+        add(SourceKind::PS4Torrent, "ps4torrent", "PS4 Torrent", "https://ps4torrent.net",
+            "/", "/page/{page}/");
+        add(SourceKind::GameTorrent, "gametorrent", "GameTorrent", "https://gametorrent.org",
+            "/category/playstation-4/", "/category/playstation-4/page/{page}/");
+        add(SourceKind::LoveGames, "love-games", "Love Games", "https://love-games1.net",
+            "/load/igry_dlja_konsolej/igry_dlja_playstation_4/42",
+            "/load/igry_dlja_konsolej/igry_dlja_playstation_4/42-{page}");
+        return table;
+    }();
+    return defaults;
+}
+
 struct SourceRegistry {
     std::mutex mutex;
-    std::shared_ptr<const SourceTable> current = std::make_shared<SourceTable>();
+    std::shared_ptr<const SourceTable> current = std::make_shared<SourceTable>(builtInSources());
 };
 inline SourceRegistry& sourceRegistry() {
     static SourceRegistry registry;
@@ -79,7 +108,9 @@ inline std::string urlHost(const std::string& url) {
     if (scheme == std::string::npos) return "";
     size_t start = scheme + 3;
     size_t end = url.find_first_of("/?#", start);
-    return url.substr(start, end == std::string::npos ? std::string::npos : end - start);
+    std::string host = url.substr(start, end == std::string::npos ? std::string::npos : end - start);
+    for (auto& c : host) c = (char)tolower((unsigned char)c);
+    return host;
 }
 
 inline std::string urlOrigin(const std::string& url) {

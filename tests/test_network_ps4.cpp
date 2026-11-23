@@ -1,3 +1,4 @@
+#include "test_source_setup.h"
 #define PORTAL_HOST
 #ifndef NULLSTORE_NETWORK_SOURCE
 #define NULLSTORE_NETWORK_SOURCE "../src/network_ps4.cpp"

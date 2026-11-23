@@ -27,7 +27,7 @@ void portalNetworkTrace(const char*format,...){char message[768];va_list args;va
 #if defined(PORTAL_SERVICE_DAEMON) && !defined(PORTAL_HOST)
  SERVICE_LOG("network-fetch: %s",message);
 #elif !defined(PORTAL_HOST)
- char line[896];int n=snprintf(line,sizeof line,"[NETWORK 1.0][pid %d][%lld] %s\n",getpid(),(long long)time(0),message);if(n<=0)return;size_t size=(size_t)n<sizeof line?(size_t)n:sizeof line-1;const char*root=nullStoreDataRoot();char path[128];snprintf(path,sizeof path,"%s/network.log",root);int fd=open(path,O_WRONLY|O_CREAT|O_APPEND,0666);if(fd<0){snprintf(path,sizeof path,"/user%s/network.log",root);fd=open(path,O_WRONLY|O_CREAT|O_APPEND,0666);}if(fd>=0){size_t offset=0;while(offset<size){ssize_t wrote=write(fd,line+offset,size-offset);if(wrote<=0)break;offset+=(size_t)wrote;}close(fd);}
+ char line[896];int n=snprintf(line,sizeof line,"[NETWORK 1.1][pid %d][%lld] %s\n",getpid(),(long long)time(0),message);if(n<=0)return;size_t size=(size_t)n<sizeof line?(size_t)n:sizeof line-1;const char*root=nullStoreDataRoot();char path[128];snprintf(path,sizeof path,"%s/network.log",root);int fd=open(path,O_WRONLY|O_CREAT|O_APPEND,0666);if(fd<0){snprintf(path,sizeof path,"/user%s/network.log",root);fd=open(path,O_WRONLY|O_CREAT|O_APPEND,0666);}if(fd>=0){size_t offset=0;while(offset<size){ssize_t wrote=write(fd,line+offset,size-offset);if(wrote<=0)break;offset+=(size_t)wrote;}close(fd);}
 #endif
 }
 bool portalNetworkInit(){
@@ -72,7 +72,7 @@ bool portalNetworkFetch(const std::string&initial,std::string&out,size_t cap,con
  std::string url=initial;
  for(int hop=0;hop<6;hop++){
   if(!networkURL(url)){portalNetworkTrace("GET failed host=%s hop=%d reason=invalid_url",networkHost(url).c_str(),hop);return false;}
-  int t=sceHttpCreateTemplate(http,"NULL_store/1.0",ORBIS_HTTP_VERSION_1_1,1);
+  int t=sceHttpCreateTemplate(http,"NULL_store/1.1",ORBIS_HTTP_VERSION_1_1,1);
   if(t<0){portalNetworkTrace("GET failed host=%s hop=%d reason=create_template result=%d",networkHost(url).c_str(),hop,t);return false;}
   int co=-1,r=-1,code=0,sendResult=-1,readFailure=0;bool ok=false;std::string location,failure="create_connection";
   autoRedirect(t,0);sceHttpSetResolveTimeOut(t,8000000);sceHttpSetConnectTimeOut(t,8000000);sceHttpSetSendTimeOut(t,8000000);recvTimeout(t,10000000);

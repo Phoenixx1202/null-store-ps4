@@ -10,6 +10,7 @@
 #include <orbis/libkernel.h>
 
 #include "data_root.h"
+#include "installer.h"
 #include "graphics/Renderer.h"
 #include "network_ps4.h"
 #include "service_protocol.h"
@@ -24,7 +25,34 @@ static std::string result = "Press X to install or start the optional service.";
 static void* install(void*)
 {
     std::string error;
-    const bool ok = portalServiceInstallAndLaunch(error);
+    bool ok = portalStartPackagedWorker(error);
+    if (!ok && !portalWorkerRunning()) {
+        PackageInstaller installer(nullStoreDataRoot(), ps4InstallBackend());
+        if (installer.start()) {
+            installer.scan(0, "");
+            uint64_t version = 0;
+            bool submitted = false;
+            error = "Check PS4 Notifications for the worker installation.";
+            for (int i = 0; i < 600; ++i) {
+                bool loading = false;
+                std::vector<InstallPackage> files;
+                std::string why;
+                if (installer.snapshot(version, files, loading, why) && !loading) {
+                    if (!why.empty()) { error = why; break; }
+                    if (!files.empty()) {
+                        const auto& pkg = files.front();
+                        if (pkg.state == InstallState::Error) { error = pkg.note; break; }
+                        if (pkg.state == InstallState::Complete) { ok = portalStartPackagedWorker(error); break; }
+                        if (pkg.state == InstallState::Ready && !submitted && !portalWorkerRunning()) {
+                            installer.submit(pkg.path);
+                            submitted = true;
+                        }
+                    }
+                }
+                sceKernelUsleep(100000);
+            }
+        }
+    }
     pthread_mutex_lock(&mutex);
     result = ok ? "Service connected. You can close this setup app and use NULL_store." : error;
     busy = false;

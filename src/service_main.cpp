@@ -20,12 +20,16 @@ static void serviceAtExit(){serviceLog("C runtime exit handler reached");}
 int main(){
     serviceLog("main entered; pid=%d uid=%d",getpid(),getuid());
     if(atexit(serviceAtExit)!=0)serviceLog("could not register C runtime exit marker");
+#ifdef NULLSTORE_PACKAGED_WORKER
+    serviceLog("Packaged worker entered with application permissions");
+#else
     std::string error;
     serviceLog("permission elevation begin");
     bool permitted=portalServicePrivileges(error);
     serviceLogReopen();
     serviceLog("permission elevation result=%d uid=%d error=%s",permitted?1:0,getuid(),error.c_str());
-    if(!permitted)return 10;
+    if(!permitted)serviceLog("SDK unavailable; trying daemon registration and queue access with existing permissions");
+#endif
     OrbisUserServiceInitializeParams p={};p.priority=256;
     serviceLog("sceUserServiceInitialize begin");
     int user=sceUserServiceInitialize(&p);

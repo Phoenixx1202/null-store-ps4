@@ -1,6 +1,6 @@
 # Building NULL_store
 
-The application, optional service, torrent engine, installer adapter and host tests are in this repository. The packages on the Releases page are prebuilt from this source, with additional generated assets and tools described below.
+The application, optional service, torrent engine, installer adapter and host tests are in this repository. The package targets build the store, download worker and optional setup app.
 
 ## Requirements
 
@@ -32,30 +32,26 @@ The store draws with Piglet, the console's OpenGL ES 2.0 implementation (`libSce
 
 ## PC preview
 
-`make preview` builds `build/preview` with the host compiler and writes one PNG per screen to `build/preview/`. It runs the same `StoreView` layout code through a software backend, so layout work can be checked without a console. Cover art is shown when `assets/covers/` or `build/preview-data/covers/` contain `<id>.jpg` files. On Windows it uses the Microsoft toolchain behind `clang++` and the small POSIX shims in `tools/win_compat`.
+`make preview` builds `build/preview-tool` with the host compiler and writes one PNG per screen to `build/preview/`. It runs the same `StoreView` layout code through a software backend, so layout work can be checked without a console. Cover art is shown when `assets/covers/` or `build/preview-data/covers/` contain `<id>.jpg` files. On Windows it uses the Microsoft toolchain behind `clang++` and the small POSIX shims in `tools/win_compat`.
 
 The preview does not exercise Piglet itself: test on a PS4 before releasing.
 
 ## Assets and package build
 
-Generated packages, console runtime modules, the compatibility helper, cover images and the generated cover archive are not included in the source tree. The package targets require additional assets, including:
+The repository includes the catalogue snapshot and thumbnail pack for the three built-in sources. To override or add a thumbnail, put a JPEG named after the numeric listing ID in `assets/covers/` and run `make assets/covers.pack`.
 
-- `sce_module/libc.prx` and `sce_module/libSceFios2.prx`. The Makefile copies them from the toolchain's `samples/piglet/sce_module` when they are missing.
-- `assets/service/compat-jb.prx`, the Itemzflow compatibility module linked in the README, and `assets/service/COMPAT-PROVENANCE.txt`. Follow the upstream license and retain its notices when redistributing it.
-- Optional original JPEG covers can be packed with `make assets/covers.pack`. The console caches artwork from configured sources.
+The Makefile copies `libc.prx` and `libSceFios2.prx` from the toolchain's `samples/piglet/sce_module` directory. Run `make` for the store or `make service-package` for the optional setup app.
 
-After supplying these inputs, run `make` for the store and `make service-package` for the setup app. The Makefile also generates the service executable and package metadata.
-
-`make test-package` builds `build/NULL_store-test-no-service.pkg` without the compatibility module, for trying a build on a console: everything works except installing or starting the background service.
+`make worker-package` builds the standalone worker. Both the store and the optional setup app embed that package. `make test-package` also copies the store build to `build/NULL_store-test.pkg`.
 
 Text assets are verified by hash and read by the console as they are, so `.gitattributes` keeps every text file LF on all platforms.
 
 ## GitHub Actions
 
-`.github/workflows/build.yml` builds on every push (any branch), every pull request and on demand (Actions > Build > Run workflow). It installs LLVM on Ubuntu, downloads the OpenOrbis toolchain release named in `OPENORBIS_VERSION` (v0.5.4), runs `make test-package` and uploads `NULL_store-PS4-<version>.pkg` with its SHA-256 as the `NULL_store-PS4` artifact. The version comes from `APP_VER` in `tools/package.py`. Like the test package, it leaves out the background service's compatibility module. A second job runs the host checks.
+`.github/workflows/build.yml` builds on every push (any branch), every pull request and on demand (Actions > Build > Run workflow). It installs LLVM on Ubuntu, downloads the OpenOrbis toolchain release named in `OPENORBIS_VERSION` (v0.5.4), runs `make test-package` and uploads `NULL_store-PS4-<version>.pkg` with its SHA-256 as the `NULL_store-PS4` artifact. The version comes from `APP_VER` in `tools/package.py`. The store artifact includes the download worker. A second job runs the host checks.
 
 ## Host checks
 
 `make test` runs the host suite on macOS or Linux using the OpenOrbis headers (`tests/tests.mk`); it needs POSIX and is not available with the Microsoft toolchain. These checks and the preview do not replace testing on a PS4.
 
-The certificate bundle, SDK notices and installer provenance retain their respective notices under `assets/`. The Itemzflow helper is a separate upstream component and its source is linked in the README.
+The certificate bundle, SDK notices and installer provenance retain their respective notices under `assets/`.

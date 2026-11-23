@@ -27,7 +27,7 @@ int main() {
     registerTestSource("one", "https://example.org");
     registerTestSource("two", "https://games2.example.org");
 
-    char temp[] = "build/tmp/nullstore-cache-XXXXXX";
+    char temp[] = "/tmp/nullstore-cache-XXXXXX";
     assert(mkdtemp(temp));
     std::string root = temp;
 

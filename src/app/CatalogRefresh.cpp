@@ -1,6 +1,6 @@
 #include "app/CatalogRefresh.h"
 
-#include <sys/stat.h>
+#include <unordered_map>
 
 #include <orbis/libkernel.h>
 
@@ -8,15 +8,9 @@
 #include "providers.h"
 #include "sources.h"
 
-// Implemented in src/graphics/Image.cpp (the program's stb_image instance).
-extern "C" int stbi_info_from_memory(const unsigned char* buffer, int length, int* x, int* y, int* components);
-
 namespace ns {
 
 namespace {
-
-
-const char* const kBundledCoverIndex = "/app0/assets/covers.idx";
 
 
 bool fetchPage(const std::string& url, std::string& out)
@@ -24,26 +18,19 @@ bool fetchPage(const std::string& url, std::string& out)
     return sourceURL(url) && portalNetworkFetch(url, out, 4 * 1024 * 1024, "");
 }
 
-bool fileExists(const std::string& path)
-{
-    struct stat info;
-    return stat(path.c_str(), &info) == 0;
-}
-
-std::vector<Game> gamesOfSource(const std::vector<Game>& games, int source)
-{
-    std::vector<Game> part;
-    for (const Game& game : games) {
-        if (sourceForURL(game.url) == source) {
-            part.push_back(game);
-        }
-    }
-    return part;
-}
-
 } // namespace
 
 CatalogRefresh::CatalogRefresh(std::string dataPath) : data_(std::move(dataPath)) {}
+
+CatalogRefresh::~CatalogRefresh()
+{
+    pthread_mutex_lock(&lock_);
+    closing_ = true;
+    interrupted_ = true;
+    pthread_mutex_unlock(&lock_);
+    if (joinable_) pthread_join(thread_, nullptr);
+    pthread_mutex_destroy(&lock_);
+}
 
 void CatalogRefresh::setStatus(const std::string& text)
 {
@@ -52,9 +39,9 @@ void CatalogRefresh::setStatus(const std::string& text)
     pthread_mutex_unlock(&lock_);
 }
 
-void CatalogRefresh::publish(const std::vector<Game>& games)
+void CatalogRefresh::publish(const std::vector<Game>& games, bool persist)
 {
-    writeFile(data_ + "/catalog.tsv", serialize(games));
+    if (persist && !games.empty()) writeFile(data_ + "/catalog.tsv", serialize(games));
     pthread_mutex_lock(&lock_);
     refreshed_ = games;
     ready_ = true;
@@ -84,10 +71,17 @@ bool CatalogRefresh::pollCatalogue(std::vector<Game>& games)
     return ready;
 }
 
-void CatalogRefresh::start(int source, bool force)
+void CatalogRefresh::start(int source, bool force, bool sourcesChanged)
 {
     pthread_mutex_lock(&lock_);
     if (working_) {
+        if (force || sourcesChanged) {
+            source_ = source;
+            forced_ = force;
+            pending_ = true;
+            interrupted_ = true;
+            ready_ = false;
+        }
         pthread_mutex_unlock(&lock_);
         return;
     }
@@ -96,10 +90,9 @@ void CatalogRefresh::start(int source, bool force)
     working_ = true;
     pthread_mutex_unlock(&lock_);
 
-    pthread_t thread;
-    if (pthread_create(&thread, nullptr, entry, this) == 0) {
-        pthread_detach(thread);
-    } else {
+    if (joinable_) pthread_join(thread_, nullptr);
+    joinable_ = pthread_create(&thread_, nullptr, entry, this) == 0;
+    if (!joinable_) {
         pthread_mutex_lock(&lock_);
         working_ = false;
         message_ = "Could not start the refresh. Try again.";
@@ -109,32 +102,58 @@ void CatalogRefresh::start(int source, bool force)
 
 void* CatalogRefresh::entry(void* self)
 {
-    static_cast<CatalogRefresh*>(self)->run();
+    auto* refresh = static_cast<CatalogRefresh*>(self);
+    for (;;) {
+        refresh->run();
+        pthread_mutex_lock(&refresh->lock_);
+        const bool again = refresh->pending_ && !refresh->closing_;
+        refresh->pending_ = false;
+        if (again) refresh->interrupted_ = false;
+        else refresh->working_ = false;
+        pthread_mutex_unlock(&refresh->lock_);
+        if (!again) break;
+    }
     return nullptr;
 }
 
 void CatalogRefresh::run()
 {
-    std::vector<Game> next = mergedCatalog(data_ + "/catalog.tsv");
     const auto sources = sourceSnapshot();
+    std::vector<Game> next = mergedCatalog(data_ + "/catalog.tsv", *sources, "/app0/assets/catalog.tsv");
     int updated = 0, cached = 0, unavailable = 0;
+    pthread_mutex_lock(&lock_);
     const int chosen = source_;
     const bool force = forced_;
+    pthread_mutex_unlock(&lock_);
 
-    for (int source = 1; source <= static_cast<int>(sources->items.size()); source++) {
+    // Check additions first, so a phone save can show new cards during a long built-in refresh.
+    std::vector<int> order;
+    for (int i = 1; i <= static_cast<int>(sources->items.size()); ++i)
+        if (sources->at(i)->kind == SourceKind::Custom) order.push_back(i);
+    for (int i = 1; i <= static_cast<int>(sources->items.size()); ++i)
+        if (sources->at(i)->kind != SourceKind::Custom) order.push_back(i);
+    for (int source : order) {
+        if (interrupted_ || sources != sourceSnapshot()) return;
         if (!sources->at(source)->enabled || (chosen && source != chosen)) {
             continue;
         }
-        if (!force && providerCacheFresh(data_, source)) {
+        if (!force && providerCacheFresh(data_, source, time(nullptr), *sources)) {
             cached++;
             continue;
         }
-        const int pages = sources->at(source)->maxPages;
+        const auto& provider = *sources->at(source);
+        const bool builtIn = provider.kind != SourceKind::Custom;
+        int pages = builtIn ? 1 : provider.maxPages;
         bool ok = true;
         std::vector<Game> part;
         std::set<int> ids;
+        std::unordered_map<int, const Game*> old;
+        for (const auto& game : next) old.emplace(game.id, &game);
+        const bool needsPreview = std::none_of(next.begin(), next.end(),
+            [&](const Game& game) { return sources->owns(source, game.url); });
         for (int page = 1; page <= pages; page++) {
-            setStatus(std::string("Refreshing ") + sourceName(source) + " " + std::to_string(page) + "/" +
+            if (interrupted_ || sources != sourceSnapshot()) return;
+            setStatus(std::string("Refreshing ") + sources->label(source) + " " + std::to_string(page) + "/" +
                       std::to_string(pages));
             std::string html;
             const auto url = sources->listingURL(source, page);
@@ -145,103 +164,53 @@ void CatalogRefresh::run()
             }
             std::vector<Game> cards = parseListingWith(*sources, html, source);
             if (cards.empty()) {
+                if (builtIn) ok = false;
                 break;
             }
+            if (builtIn) pages = std::max(pages, builtInLastPage(html, provider.kind));
             size_t previousCount = ids.size();
             for (Game& game : cards) {
                 if (!ids.insert(game.id).second) {
                     continue;
                 }
                 // Keep what an earlier refresh knew and this listing omits.
-                for (const Game& old : next) {
-                    if (old.id == game.id) {
-                        if (game.image.empty()) game.image = old.image;
-                        if (game.year.empty()) game.year = old.year;
-                        break;
-                    }
+                const auto found = old.find(game.id);
+                if (found != old.end()) {
+                    if (game.image.empty()) game.image = found->second->image;
+                    if (game.year.empty()) game.year = found->second->year;
+                    if (game.size.empty()) game.size = found->second->size;
                 }
                 part.push_back(game);
+            }
+            if (needsPreview && !part.empty() && (page <= 2 || page % 8 == 0)) {
+                auto preview = next;
+                preview.insert(preview.end(), part.begin(), part.end());
+                publish(preview, false);
             }
             if (ids.size() == previousCount) break;
             sceKernelUsleep(350000);
         }
-        if (sources != sourceSnapshot()) break;
-        if (ok && saveProviderCache(data_, source, part)) {
-            next.erase(std::remove_if(next.begin(), next.end(),
-                                      [&](const Game& game) { return sourceForURL(game.url) == source; }),
-                       next.end());
-            next.insert(next.end(), part.begin(), part.end());
-            updated++;
-            publish(next);
-        } else {
-            unavailable++;
+        if (interrupted_ || sources != sourceSnapshot()) return;
+        if (part.empty()) {
+            ++unavailable;
+            continue;
         }
+        // Retain previous listings if the source stopped early or its pagination changed.
+        for (const auto& game : next)
+            if (sources->owns(source, game.url) && ids.insert(game.id).second) part.push_back(game);
+        const bool saved = saveProviderCache(data_, source, part, ok, time(nullptr), *sources);
+        if (ok && saved) ++updated;
+        else ++unavailable;
+        next.erase(std::remove_if(next.begin(), next.end(),
+                                  [&](const Game& game) { return sources->owns(source, game.url); }), next.end());
+        next.insert(next.end(), part.begin(), part.end());
+        if (interrupted_ || sources != sourceSnapshot()) return;
+        publish(next);
     }
 
-    publish(mergedCatalog(data_ + "/catalog.tsv"));
-    if (updated && sources == sourceSnapshot()) {
-        cacheCovers(next, chosen);
-    }
-
+    if (interrupted_ || sources != sourceSnapshot()) return;
     setStatus(std::to_string(updated) + " updated / " + std::to_string(cached) + " cached / " +
               std::to_string(unavailable) + " unavailable | Saved catalogues retained");
-    pthread_mutex_lock(&lock_);
-    working_ = false;
-    pthread_mutex_unlock(&lock_);
-}
-
-// Downloads the cover of every game that has none in the package or on disk.
-void CatalogRefresh::cacheCovers(std::vector<Game>& games, int chosen)
-{
-    std::set<int> packaged;
-    const std::string index = readFile(kBundledCoverIndex);
-    for (size_t p = 0; p < index.size();) {
-        packaged.insert(atoi(index.c_str() + p));
-        const auto end = index.find('\n', p);
-        if (end == std::string::npos) {
-            break;
-        }
-        p = end + 1;
-    }
-
-    int artwork = 0;
-    for (const Game& game : games) {
-        const int source = sourceForURL(game.url);
-        if (chosen && source != chosen) {
-            continue;
-        }
-        const std::string folder = providerCoverPath(data_, source);
-        mkdir(folder.c_str(), 0777);
-        const std::string filename = std::to_string(game.id) + ".jpg";
-        if (packaged.count(game.id) || fileExists(folder + "/" + filename) ||
-            fileExists(data_ + "/covers/" + filename)) {
-            continue;
-        }
-
-        std::string bytes;
-        if (sourceURL(game.image) && portalNetworkFetch(game.image, bytes, 3 * 1024 * 1024, "")) {
-            int w = 0, h = 0, components = 0;
-            if (stbi_info_from_memory(reinterpret_cast<const unsigned char*>(bytes.data()),
-                                      static_cast<int>(bytes.size()), &w, &h, &components) &&
-                w <= 2048 && h <= 2048) {
-                writeFile(folder + "/" + filename, bytes);
-            }
-        }
-        sceKernelUsleep(200000);
-        if (++artwork % 20 == 0) {
-            saveProviderCache(data_, source, gamesOfSource(games, source), false);
-            publish(games);
-            setStatus("Caching provider cover art | Catalogue ready to browse");
-        }
-    }
-
-    for (int source = 1; source <= int(sourceSnapshot()->items.size()); source++) {
-        const std::vector<Game> part = gamesOfSource(games, source);
-        if (!part.empty() && (chosen == 0 || chosen == source)) {
-            saveProviderCache(data_, source, part, false);
-        }
-    }
-    publish(games);
 }
 
 } // namespace ns

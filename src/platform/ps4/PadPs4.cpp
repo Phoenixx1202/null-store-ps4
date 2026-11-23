@@ -74,8 +74,8 @@ public:
         if (b & ORBIS_PAD_BUTTON_SQUARE) bits |= BtnSquare;
         if (b & ORBIS_PAD_BUTTON_L1) bits |= BtnL1;
         if (b & ORBIS_PAD_BUTTON_R1) bits |= BtnR1;
-        if (b & ORBIS_PAD_BUTTON_L2) bits |= BtnL2;
-        if (b & ORBIS_PAD_BUTTON_R2) bits |= BtnR2;
+        if ((b & ORBIS_PAD_BUTTON_L2) || data.analogButtons.l2 >= 128) bits |= BtnL2;
+        if ((b & ORBIS_PAD_BUTTON_R2) || data.analogButtons.r2 >= 128) bits |= BtnR2;
         if (b & ORBIS_PAD_BUTTON_L3) bits |= BtnL3;
         if (b & ORBIS_PAD_BUTTON_R3) bits |= BtnR3;
         if (b & ORBIS_PAD_BUTTON_OPTIONS) bits |= BtnOptions;

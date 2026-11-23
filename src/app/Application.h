@@ -5,6 +5,7 @@
 #include <string>
 
 #include "app/CatalogRefresh.h"
+#include "app/ListingLookup.h"
 #include "sources_server.h"
 #include "download_controller.h"
 #include "graphics/Renderer.h"
@@ -56,13 +57,21 @@ private:
     std::unique_ptr<SourcesServer> setup_;
 
     bool downloadsReady_ = false;
+    std::shared_ptr<const SourceTable> displayedSources_;
+    bool resumeAttempted_ = false;
+    uint64_t workerStopDeadline_ = 0, nextWorkerCheck_ = 0;
+    bool reinstallAfterRemoval_ = false, workerMenuWasBusy_ = false;
     bool installerReady_ = false;
     bool keyboardFallback_ = false;
     bool keyboardForKey_ = false; // the open keyboard types the Debrid key
     std::u16string keyboardTitle_, keyboardHint_; // held while the keyboard is open
     bool splashHidden_ = false;
-    uint64_t lastFrameMicros_ = 0;
+    uint64_t lastFrameMicros_ = 0, nextStallLog_ = 0;
     uint64_t downloadVersion_ = 0;
+    ListingLookup lookup_;
+    std::set<std::string> sizeAttempts_, detailAttempts_;
+    uint64_t nextLookup_ = 0, nextSetupAddressCheck_ = 0;
+    void updateDetails(bool refreshed);
     uint64_t installVersion_ = 0;
 };
 

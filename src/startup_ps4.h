@@ -1,5 +1,5 @@
 #pragma once
-#include "install_log.h"
+#include "mapped_module.h"
 #include <orbis/Sysmodule.h>
 
 // The installer SELF profile does not preload the regular title's UI modules.
@@ -15,12 +15,12 @@ inline bool loadStartupModules(){
         {ORBIS_SYSMODULE_INTERNAL_NET,"Net"},
         {ORBIS_SYSMODULE_INTERNAL_NETCTL,"NetCtl"}
     };
-    installLog("NULL_store 1.0 startup: loading application dependencies");
+    installLog("NULL_store 1.1.1 recovery startup: loading application dependencies");
     for(const auto& module:modules){
         int result=(int)sceSysmoduleLoadModuleInternal(module.id);
         installLog("Startup module %s id=0x%08X result=0x%08X",
                    module.name,(unsigned)module.id,(unsigned)result);
-        if(result!=0){
+        if(result!=0 && loadedModule((std::string("libSce")+module.name).c_str())<0){
             installLog("Startup stopped before using unavailable module %s",module.name);
             return false;
         }
