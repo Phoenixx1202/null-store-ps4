@@ -48,9 +48,10 @@ void CatalogRefresh::publish(const std::vector<Game>& games, bool persist)
     pthread_mutex_unlock(&lock_);
 }
 
-bool CatalogRefresh::pollStatus(std::string& current)
+bool CatalogRefresh::pollStatus(std::string& current, bool& busy)
 {
     pthread_mutex_lock(&lock_);
+    busy = working_;
     const bool changed = !message_.empty() && message_ != current;
     if (changed) {
         current = message_;

@@ -110,9 +110,19 @@ float StoreView::drawFacts(const StoreState& s, const Game& game, float x, float
     return x;
 }
 
-void StoreView::draw(StoreState& s, float dt)
+void StoreView::draw(StoreState& s, float dt, const Texture* trailerFrame, TrailerState trailerStatus, int trailerProgress)
 {
     dt_ = dt;
+    spinnerPhase_ = std::fmod(spinnerPhase_ + dt, 1.0f);
+    if (s.trailerOpen && trailerFrame && trailerFrame->valid() &&
+        (trailerStatus == TrailerState::Playing || trailerStatus == TrailerState::Rebuffering)) {
+        drawFullscreen(*trailerFrame, "");
+        if (trailerStatus == TrailerState::Rebuffering) {
+            spinner(kSafeX + 12, kHintCenter, 10);
+            r_.text(tr("Buffering trailer…"), kSafeX + 44, ui::baseline(r_, kHintCenter, kFontLabel), kFontLabel, kText);
+        }
+        return;
+    }
     s.clampSelections();
     reflection_ += dt / ui::kReflectionSeconds;
     reflection_ -= std::floor(reflection_);
@@ -138,7 +148,7 @@ void StoreView::draw(StoreState& s, float dt)
     const unsigned open = (s.workerStarting ? 1024u : s.confirmWorkerRemoval ? 512u : s.workerMenu || s.removeMenu ? 256u : 0u) | (s.sourcePicker ? 1u : 0u) | (s.keyboard ? 2u : 0u) | (s.installPicker ? 4u : 0u) |
                           (s.settings ? 8u : 0u) | (s.downloadLocationPicker ? 16u : 0u) |
                           (s.sourceFilterPicker ? 32u : 0u) | (s.sortPicker ? 64u : 0u) | (s.debridPicker ? 128u : 0u) |
-                          (s.trailerOpen ? 2048u : 0u);
+                          (s.trailerOpen ? 2048u : 0u) | (s.screenshotOpen ? 4096u : 0u) | (s.versionPicker ? 8192u : 0u);
     if (open != openDialogs_) {
         openDialogs_ = open;
         dialog_.snap(0.0f);
@@ -150,8 +160,9 @@ void StoreView::draw(StoreState& s, float dt)
         r_.pushOpacity(shown);
         if (s.workerStarting) {
             const Rect frame = dialog(1000, 340, "Starting download worker");
+            spinner(frame.x + 74, frame.y + 147, 12);
             r_.textFit("Please wait while the store saves your queue and checks the worker.",
-                       frame.x + 56, frame.y + 155, kFontBody, kDim, frame.w - 112);
+                       frame.x + 108, frame.y + 155, kFontBody, kDim, frame.w - 164);
         } else if (s.confirmWorkerRemoval) {
             const bool uninstall = s.confirmedWorkerAction == WorkerAction::Uninstall;
             const Rect frame = dialog(1000, 500, uninstall ? "Uninstall download worker?" :
@@ -172,7 +183,10 @@ void StoreView::draw(StoreState& s, float dt)
                                      s.workerInstall == WorkerInstallState::Installing ? "Worker installation is in progress…" :
                                      s.workerInstall == WorkerInstallState::Unknown ? "Could not determine whether the worker is installed." :
                                      "Checking worker installation…";
-                r_.textFit(status, frame.x + 56, frame.y + 126, kFontLabel, kDim, frame.w - 112);
+                const bool busy = s.workerRemovalBusy || s.workerInstall == WorkerInstallState::Installing ||
+                                  s.workerInstall == WorkerInstallState::Unchecked;
+                if (busy) spinner(frame.x + 68, frame.y + 120, 9);
+                r_.textFit(status, frame.x + (busy ? 92 : 56), frame.y + 126, kFontLabel, kDim, frame.w - 148);
             } else if (s.workerMenu && s.workerInstall == WorkerInstallState::Installed) {
                 r_.textFit("Worker installed. Build verification unavailable.",
                            frame.x + 56, frame.y + 126, kFontLabel, kDim, frame.w - 112);
@@ -185,7 +199,9 @@ void StoreView::draw(StoreState& s, float dt)
         if (s.sourcePicker) drawSourcePicker(s);
         if (s.keyboard) drawKeyboard(s);
         if (s.installPicker) drawInstallPicker(s);
-        if (s.trailerOpen) drawTrailer(s);
+        if (s.versionPicker) drawVersionPicker(s);
+        if (s.screenshotOpen) drawScreenshot(s);
+        if (s.trailerOpen) drawTrailer(s, trailerStatus, trailerProgress);
         // Settings and the choices it opens: only the one on top is drawn.
         if (s.downloadLocationPicker) {
             drawLocationPicker(s);
@@ -203,6 +219,17 @@ void StoreView::draw(StoreState& s, float dt)
 
     drawNotice(s);
     s.dirty = false;
+}
+
+void StoreView::spinner(float x, float y, float radius)
+{
+    constexpr int dots = 8;
+    const float bead = std::max(2.0f, radius * 0.23f);
+    for (int i = 0; i < dots; ++i) {
+        const float angle = (spinnerPhase_ + float(i) / dots) * 6.2831853f;
+        r_.roundedRect(box(x + std::cos(angle) * radius - bead, y + std::sin(angle) * radius - bead,
+                           bead * 2, bead * 2), bead, kAccentBright.withAlpha(float(i + 1) / dots));
+    }
 }
 
 // -- Tab bar ---------------------------------------------------------------------
@@ -240,6 +267,13 @@ void StoreView::drawFocusedGame(StoreState& s)
                  kFontLabel, kMuted);
     if (!s.query.empty()) {
         ui::hintsFrom(r_, x + 26.0f, 196.0f - 25.0f, { { { Key::Circle }, tr("Clear") } }, 34.0f);
+    }
+
+    if (s.refreshing) {
+        const auto label = tr("Refreshing catalogue…");
+        const float left = kContentRight - r_.measureText(label, kFontSmall);
+        spinner(left - 25, 188, 8);
+        r_.text(label, left, 196, kFontSmall, kMuted);
     }
 
     const Game* game = s.current();
@@ -409,6 +443,7 @@ void StoreView::drawCard(const StoreState& s, int index, const Rect& slot, float
         r_.roundedRect(art, radius, Color(0.07f, 0.13f, 0.11f));
         r_.roundedOutline(art, radius, 1.0f, kGlassBorder);
         r_.pushClip(art);
+        if (!cover && covers_.loading(game.id)) spinner(art.right() - 24, art.bottom() - 22, 8);
         r_.textLines(text.title, art.x + 16.0f, art.y + 44.0f, kFontSmall, kMuted, art.w - 32.0f, 4);
         if (entries <= 1) { // with several entries the badge takes this place
             r_.text(sourceName(sourceForURL(game.url)), art.x + 16.0f, art.bottom() - 18.0f, 15, kDim, art.w - 32.0f);
@@ -475,7 +510,8 @@ void StoreView::drawGamePage(StoreState& s, float amount)
     // Behind everything: the title's own background picture, dimmed for the
     // text; until it is there, the tile enlarged far past its resolution.
     const GameArtwork* scene = text.titleId.empty() || !s.officialArt ? nullptr : art_.get(text.titleId);
-    s.setTrailer(game.id, scene ? scene->preview : std::string());
+    s.setGameMedia(game.id, scene ? static_cast<int>(scene->screenshots.size()) : 0,
+                   scene ? scene->preview : std::string());
     const bool haveBackground = scene && scene->background.valid();
     const float arrived = haveBackground ?
         clampf(static_cast<float>((art_.now() - scene->readyTime) / 0.35), 0.0f, 1.0f) : 0.0f;
@@ -500,6 +536,7 @@ void StoreView::drawGamePage(StoreState& s, float amount)
     } else {
         r_.roundedRect(art, 26.0f, Color(0.07f, 0.13f, 0.11f));
         r_.roundedOutline(art, 26.0f, 1.0f, kGlassBorder);
+        if (covers_.loading(game.id)) spinner(art.x + art.w * 0.5f, art.y + art.h * 0.55f, 18);
         r_.textLines(text.title, art.x + 32.0f, art.y + 80.0f, kFontBody, kMuted, art.w - 64.0f, 6);
     }
 
@@ -548,69 +585,94 @@ void StoreView::drawGamePage(StoreState& s, float amount)
     }
 
     const int queued = s.matchingDownload(chosen);
-    const char* action = tr(queued >= 0 ? "Go to downloads" : "Download");
-    const float buttonY = several ? drawVersions(s, x, below + 153.0f) : below + 196.0f;
+    const bool downloadReady = s.canDownloadVersion();
+    const char* action = tr(downloadReady && queued >= 0 ? "Go to downloads" : "Download");
+    const char* versionAction = tr(downloadReady ? "Change version" : "Select version");
+    const float versionY = below + 198.0f;
+    if (several) {
+        const auto version = describe(chosen).version;
+        std::string source = sourceName(sourceForURL(chosen.url));
+        if (!version.empty()) source += std::string(kDot) + "v" + version;
+        const std::string value = downloadReady ? source : trf("{0} versions", std::to_string(group->size()));
+        settingRow(box(x, versionY, 850.0f, 64.0f), versionAction, value, s.detailFocus == DetailFocus::Version);
+    }
+    const float buttonY = several ? versionY + 88.0f : versionY;
     const float buttonWidth = std::max(220.0f, r_.measureText(action, kFontBody) + 64.0f);
     const Rect download(x, buttonY, buttonWidth, 54.0f);
-    if (queued < 0 || s.jobs[queued].state == DownloadState::Active || s.jobs[queued].state == DownloadState::Queued) {
+    const bool downloadFocused = downloadReady && s.detailFocus == DetailFocus::Download;
+    if (downloadFocused && (queued < 0 || s.jobs[queued].state == DownloadState::Active ||
+                            s.jobs[queued].state == DownloadState::Queued)) {
         const float pulse = 0.5f - 0.5f * std::cos(reflection_ * 6.2831853f);
         const float spread = 3.0f + 5.0f * pulse;
         r_.roundedOutline(download.inset(-spread), download.h * 0.5f + spread,
                           2.0f, kAccentBright.withAlpha(0.35f - 0.2f * pulse));
     }
-    ui::pillButton(r_, download, action, kFontBody, true);
+    if (!downloadReady) r_.pushOpacity(0.45f);
+    ui::pillButton(r_, download, action, kFontBody, downloadFocused);
+    if (!downloadReady) r_.popOpacity();
 
-    if (scene && !scene->screenshots.empty()) {
-        const float mediaY = std::clamp(buttonY + 100.0f, 628.0f, 827.0f);
-        r_.text(tr("Screenshots"), x, mediaY, kFontLabel, kText);
+    const float mediaY = std::max(buttonY + 116.0f, 660.0f);
+    if (s.officialArt && !s.mediaCount() && art_.loadingMedia(text.titleId)) {
+        spinner(x + 13, mediaY - 6, 10);
+        r_.text(tr("Loading media…"), x + 43, mediaY, kFontLabel, kMuted);
+    }
+    if (scene && s.mediaCount() > 0) {
+        r_.text(tr(s.screenshotCount > 0 ? "Screenshots" : "Trailer / preview"), x, mediaY, kFontLabel, kText);
         float shotX = x;
-        for (const auto& shot : scene->screenshots) {
+        for (int i = 0; i < s.screenshotCount; ++i) {
             const Rect image(shotX, mediaY + 15.0f, 240.0f, 135.0f);
-            r_.imageCover(shot, image);
-            r_.roundedOutline(image, 2.0f, 1.0f, kGlassBorder);
+            const bool focused = s.detailFocus == DetailFocus::Media && s.mediaSelected == i;
+            r_.image(scene->screenshots[i].thumbnail, image);
+            r_.roundedOutline(image, 14.0f, focused ? 3.0f : 1.0f, focused ? kAccentBright : kGlassBorder);
             shotX += 258.0f;
         }
+        if (!s.trailerURL.empty()) {
+            const bool focused = s.detailFocus == DetailFocus::Media && s.mediaSelected == s.screenshotCount;
+            const Rect tile(shotX, mediaY + 15.0f, 240.0f, 135.0f);
+            option(tile, tr("Play trailer"), kFontLabel, focused);
+        }
     }
+    const char* confirm = action;
+    if (s.detailFocus == DetailFocus::Version) confirm = versionAction;
+    else if (s.detailFocus == DetailFocus::Media)
+        confirm = tr(s.mediaSelected < s.screenshotCount ? "View screenshot" : "Play trailer");
     std::vector<Hint> hints = {
-        {{Key::Cross}, queued < 0 && several ? tr("Download this version") : action},
+        {{Key::Cross}, confirm},
         {{Key::Square}, favorite ? tr("Remove favorite") : tr("Favorite")},
     };
-    if (s.trailerCode.size > 0) hints.push_back({{Key::L3}, tr("Trailer / preview")});
+    if (!s.trailerURL.empty()) hints.push_back({{Key::L3}, tr("Play trailer")});
     hints.push_back({{Key::Circle}, tr("Back")});
     ui::hintsUntil(r_, kContentRight, kHintTop, hints, kKeySize);
     r_.popOpacity();
 }
 
-// Every download of the game: source, version and size; up and down choose
-// the one X downloads.
-float StoreView::drawVersions(StoreState& s, float x, float y)
+void StoreView::drawVersionPicker(const StoreState& s)
 {
-    const std::vector<int>& group = *s.currentGroup();
-    const int count = static_cast<int>(group.size());
-    const float width = 1150.0f;
-    r_.text(tr("VERSIONS") + std::string(kDot) + std::to_string(count), x, y + 20.0f, kFontLabel,
-                               kAccentBright);
-
-    constexpr int kShown = 3;
-    const int chosen = std::max(0, std::min(s.variantSelected, count - 1));
+    const auto* group = s.currentGroup();
+    if (!group || group->empty()) return;
+    const int count = static_cast<int>(group->size());
+    constexpr int kShown = 5;
+    const int shown = std::min(kShown, count);
+    const Rect frame = dialog(1170, 250.0f + shown * 70.0f, tr("Select version"));
+    const int chosen = std::clamp(s.versionChoice, 0, count - 1);
     const int first = std::max(0, std::min(chosen - kShown / 2, count - kShown));
-    for (int row = 0; row < kShown && first + row < count; ++row) {
+    for (int row = 0; row < shown; ++row) {
         const int place = first + row;
-        const Game& game = s.games[group[place]];
+        const Game& game = s.games[(*group)[place]];
         const GameText text = describe(game);
         std::string label = sourceName(sourceForURL(game.url));
         label += kDot + (text.version.empty() ? std::string(tr("Version not given")) : "v" + text.version);
         if (!game.size.empty()) {
             if (game.size != "Size on page") label += kDot + tr(game.size);
         }
-        settingRow(box(x, y + 42.0f + static_cast<float>(row) * 66.0f, width, 56.0f), label,
+        settingRow(box(frame.x + 56.0f, frame.y + 120.0f + row * 70.0f, frame.w - 112.0f, 58.0f), label,
                    withoutEmptyBrackets(latinOnly(game.title)), place == chosen);
     }
     if (count > kShown) {
-        r_.text(std::to_string(chosen + 1) + " / " + std::to_string(count), x,
-                y + 42.0f + kShown * 66.0f + 12.0f, kFontSmall, kMuted);
+        textFitRight(std::to_string(chosen + 1) + " / " + std::to_string(count), frame.right() - 56.0f,
+                     frame.bottom() - 48.0f, kFontSmall, kMuted, 230.0f);
     }
-    return y + 42.0f + std::min(count, kShown) * 66.0f + (count > kShown ? 30.0f : 6.0f);
+    dialogHints(frame, {{{Key::Cross}, tr("Select version")}, {{Key::Circle}, tr("Back")}});
 }
 
 // -- Download queue --------------------------------------------------------------
@@ -629,7 +691,9 @@ void StoreView::drawDownloads(StoreState& s)
     }
     const int start = s.jobSelected / 5 * 5;
     for (int i = start; i < std::min(start + 5, count); ++i) {
-        drawJob(s.jobs[i], box(kSafeX, 292.0f + static_cast<float>(i - start) * 136.0f, kContentW, 122.0f),
+        const auto& job = s.jobs[i];
+        const auto name = textOf(s, s.downloadListing(job)).title;
+        drawJob(job, name.empty() ? tr("Download") : name, box(kSafeX, 292.0f + static_cast<float>(i - start) * 136.0f, kContentW, 122.0f),
                 i == s.jobSelected);
     }
 
@@ -659,7 +723,7 @@ void StoreView::drawDownloads(StoreState& s)
     ui::hintsUntil(r_, kContentRight, kHintTop, hints, kKeySize);
 }
 
-void StoreView::drawJob(const DownloadRow& job, const Rect& rect, bool focused)
+void StoreView::drawJob(const DownloadRow& job, const std::string& title, const Rect& rect, bool focused)
 {
     const Color tone = stateColor(job.state);
     ui::surface(r_, rect, kRowRadius, focused);
@@ -671,7 +735,7 @@ void StoreView::drawJob(const DownloadRow& job, const Rect& rect, bool focused)
 
     const float badge = ui::chipWidth(r_, tr(stateName(job.state)));
     ui::chip(r_, right - badge, rect.y + 14.0f, tr(stateName(job.state)), tone, Color(0, 0, 0, 0));
-    r_.textFit(job.title, left, rect.y + 42.0f, 28, kText, rect.w - 56.0f - badge - 24.0f);
+    r_.textFit(title, left, rect.y + 42.0f, 28, kText, rect.w - 56.0f - badge - 24.0f);
 
     const double fraction = job.total ? std::min(1., double(job.done) / job.total) : 0;
     ui::progressBar(r_, box(left, rect.y + 60.0f, rect.w - 56.0f, 8.0f), static_cast<float>(fraction), tone);
@@ -723,18 +787,12 @@ void StoreView::drawSourcePicker(const StoreState& s)
     const float centerX = kScreenW * 0.5f;
     const float centerY = kScreenH * 0.5f;
     if (s.sourceLoading) {
-        // Only what is happening: a title, and a bar going back and forth under it.
-        loadingTime_ += dt_;
-        r_.rect(box(0, 0, kScreenW, kScreenH), Color(0.0f, 0.0f, 0.0f, 0.93f)); // the page below goes quiet
-        r_.textCentered(tr("Checking torrent link"), centerX, centerY - 18.0f, kFontTitle, kText);
-        const Rect track(centerX - 210.0f, centerY + 22.0f, 420.0f, 6.0f);
-        r_.roundedRect(track, 3.0f, Color(1.0f, 1.0f, 1.0f, 0.12f));
-        const float segment = 130.0f;
-        const float swing = 0.5f - 0.5f * std::cos(loadingTime_ * 3.4f);
-        r_.roundedRect(box(track.x + swing * (track.w - segment), track.y, segment, track.h), 3.0f, kAccentBright);
+        r_.rect(box(0, 0, kScreenW, kScreenH), Color(0.0f, 0.0f, 0.0f, 0.93f));
+        spinner(centerX, centerY - 52.0f, 20);
+        r_.textCentered(tr("Checking torrent link"), centerX, centerY + 25.0f, kFontTitle, kText);
+        ui::hintsUntil(r_, kContentRight, kHintTop, {{{Key::Circle}, tr("Back")}}, kKeySize);
         return;
     }
-    loadingTime_ = 0.0f;
     if (!s.sourceError.empty()) {
         r_.textCentered(trMessage(s.sourceError), centerX, centerY - 10.0f, kFontBody, kError);
         ui::hintsFrom(r_, centerX - ui::keyWidth(r_, Key::Circle, kKeySize) * 0.5f - 40.0f, centerY + 30.0f,
@@ -792,7 +850,8 @@ void StoreView::drawInstallPicker(const StoreState& s)
     r_.textFit(tr("Choose a package. Install the base game before updates or DLC."), x, frame.y + 122.0f, kFontLabel,
                kMuted, width);
     if (s.installLoading) {
-        r_.text(tr("Checking downloaded PKG files..."), x, frame.y + 230.0f, kFontBody, kText);
+        spinner(x + 15, frame.y + 220, 12);
+        r_.text(tr("Checking downloaded PKG files..."), x + 46, frame.y + 230.0f, kFontBody, kText);
     } else if (s.packages.empty()) {
         r_.textLines(trMessage(s.installError), x, frame.y + 230.0f, kFontBody, kError, width, 6);
     } else {
@@ -889,12 +948,60 @@ void StoreView::drawQr(const QrSymbol& code, float x, float y, int boxSize)
                 r_.rect(box(x + (4 + col) * scale, y + (4 + row) * scale, scale, scale), Color::hex(0));
 }
 
-void StoreView::drawTrailer(const StoreState& s)
+void StoreView::drawFullscreen(const Texture& texture, const std::string& caption)
 {
-    const Rect frame = dialog(740, 560, tr("Trailer / preview"));
-    const int side = s.trailerCode.pixelsFor(300);
-    drawQr(s.trailerCode, frame.x + (frame.w - side) * 0.5f, frame.y + 105.0f, 300);
-    r_.textFit(tr("Scan to watch on your phone"), frame.x + 56.0f, frame.y + 443.0f, kFontBody, kText, frame.w - 112.0f);
+    r_.rect(box(0, 0, kScreenW, kScreenH), Color::hex(0));
+    const float scale = std::min(kScreenW / texture.width(), kScreenH / texture.height());
+    const float width = texture.width() * scale;
+    const float height = texture.height() * scale;
+    r_.image(texture, box((kScreenW - width) * 0.5f, (kScreenH - height) * 0.5f, width, height));
+    r_.gradientVertical(box(0, kScreenH - 150.0f, kScreenW, 150.0f), Color(0, 0, 0, 0), Color(0, 0, 0, 0.8f));
+    if (!caption.empty()) r_.text(caption, kSafeX, ui::baseline(r_, kHintCenter, kFontLabel), kFontLabel, kText);
+    ui::hintsUntil(r_, kContentRight, kHintTop, {{{Key::Circle}, tr("Back")}}, kKeySize);
+}
+
+void StoreView::drawScreenshot(StoreState& s)
+{
+    const Game* game = s.current();
+    if (!game) return;
+    const auto id = textOf(s, *game).titleId;
+    const auto* art = art_.get(id);
+    if (!art || s.mediaSelected >= static_cast<int>(art->screenshots.size())) return;
+    const auto caption = std::to_string(s.mediaSelected + 1) + " / " + std::to_string(art->screenshots.size()) +
+        (art->screenshots.size() > 1 ? std::string(kDot) + tr("Left / Right") : std::string());
+    drawFullscreen(art->screenshots[s.mediaSelected].image, caption);
+}
+
+void StoreView::drawTrailer(const StoreState& s, TrailerState status, int progress)
+{
+    const bool downloading = status == TrailerState::DownloadingFile;
+    const bool busy = downloading || status == TrailerState::Buffering || status == TrailerState::Rebuffering ||
+                      status == TrailerState::Playing;
+    const bool useQr = offerTrailerLink(status) && !s.trailerURL.empty() && s.trailerCode.size > 0;
+    const Rect frame = dialog(840, useQr ? 640.0f : 320.0f, tr("Trailer / preview"));
+    std::string label;
+    switch (status) {
+    case TrailerState::Buffering:
+    case TrailerState::Rebuffering:
+    case TrailerState::Playing: label = tr("Buffering trailer…"); break;
+    case TrailerState::DownloadingFile:
+        label = tr(progress == 100 ? "Preparing playback…" : "This source requires a full download.");
+        if (progress >= 0 && progress < 100) label += "  " + std::to_string(progress) + "%";
+        break;
+    case TrailerState::LinkGone: label = tr("The trailer link is no longer available."); break;
+    case TrailerState::ConnectionFailed: label = tr("The PS4 could not load the trailer link."); break;
+    case TrailerState::Unsupported: label = tr("This trailer is unsupported on this PS4."); break;
+    case TrailerState::PlayerFailed: label = tr("This trailer could not play on this PS4."); break;
+    case TrailerState::Finished: label = tr("Trailer finished"); break;
+    }
+    if (busy) spinner(frame.x + 71, frame.y + 131, 12);
+    r_.textLines(label, frame.x + (busy ? 110.0f : 56.0f), frame.y + 140.0f,
+                 kFontBody, kText, frame.w - (busy ? 166.0f : 112.0f), 2);
+    if (useQr) {
+        const int side = s.trailerCode.pixelsFor(300);
+        drawQr(s.trailerCode, frame.x + (frame.w - side) * 0.5f, frame.y + 198.0f, 300);
+        r_.textFit(tr("Open this link on your phone"), frame.x + 56.0f, frame.y + 532.0f, kFontBody, kMuted, frame.w - 112.0f);
+    }
     dialogHints(frame, {{{Key::Circle}, tr("Back")}});
 }
 

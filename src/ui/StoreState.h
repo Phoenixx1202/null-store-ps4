@@ -48,6 +48,7 @@ enum Action {
 };
 
 enum class WorkerAction { Start, Stop, Install, Replace, Reinstall, Uninstall, Test };
+enum class DetailFocus { Version, Download, Media };
 
 inline const char* workerActionLabel(WorkerAction action) {
     switch (action) {
@@ -107,6 +108,7 @@ struct StoreState {
     static constexpr int kGridPage = 24;
 
     std::string base, data;
+    bool refreshing = false;
     std::string status = "Bundled catalogue"; // what the catalogue refresh is doing
     std::string query;
     std::string notice;
@@ -140,10 +142,19 @@ struct StoreState {
     QrSymbol trailerCode;
     std::string trailerURL;
     bool trailerOpen = false;
-    int trailerGame = 0;
+    bool screenshotOpen = false, versionPicker = false;
+    bool versionConfirmed = false;
+    int mediaGame = 0, screenshotCount = 0, mediaSelected = 0, versionChoice = 0;
+    DetailFocus detailFocus = DetailFocus::Download;
 
-    void setTrailer(int gameId, const std::string& url) {
-        trailerGame = gameId;
+    int mediaCount() const { return screenshotCount + (!trailerURL.empty() ? 1 : 0); }
+    void setGameMedia(int gameId, int screenshots, const std::string& url) {
+        if (mediaGame != gameId) mediaSelected = 0;
+        mediaGame = gameId;
+        screenshotCount = screenshots;
+        mediaSelected = std::clamp(mediaSelected, 0, std::max(0, screenshots + (!url.empty() ? 1 : 0) - 1));
+        if (detailFocus == DetailFocus::Media && screenshots == 0 && url.empty())
+            detailFocus = canDownloadVersion() ? DetailFocus::Download : DetailFocus::Version;
         if (url == trailerURL) return;
         trailerURL = url;
         trailerCode = {};
@@ -420,7 +431,7 @@ struct StoreState {
     // Any dialog is open: the controller talks to it, not to the screen below.
     bool dialogOpen() const
     {
-        return workerStarting || confirmWorkerRemoval || removeMenu || workerMenu || settings || sourceFilterPicker || sortPicker || debridPicker || downloadLocationPicker || installPicker || trailerOpen ||
+        return workerStarting || confirmWorkerRemoval || removeMenu || workerMenu || settings || sourceFilterPicker || sortPicker || debridPicker || downloadLocationPicker || installPicker || trailerOpen || screenshotOpen || versionPicker ||
                sourcePicker || keyboard;
     }
 
@@ -594,6 +605,12 @@ struct StoreState {
         return selected >= 0 && selected < int(groups.size()) ? &groups[selected] : nullptr;
     }
 
+    bool canDownloadVersion() const
+    {
+        const auto* group = currentGroup();
+        return versionConfirmed || !group || group->size() <= 1;
+    }
+
     // The entry chosen on the game page.
     Game* variant()
     {
@@ -607,11 +624,28 @@ struct StoreState {
 
     int selectedJob() { return jobs.empty() ? 0 : jobs[std::min(jobSelected, int(jobs.size()) - 1)].id; }
 
+    static bool downloadMatches(const DownloadRow& job, const Game& game)
+    {
+        return !job.page.empty() ? job.page == game.url : game.id > 0 && job.gameId == game.id;
+    }
+
+    Game downloadListing(const DownloadRow& job) const
+    {
+        const auto listing = std::find_if(games.begin(), games.end(), [&](const Game& game) {
+            return downloadMatches(job, game);
+        });
+        if (listing != games.end()) return *listing;
+
+        // Older queue rows save the game title and the source label together.
+        Game saved;
+        saved.title = job.title.substr(0, job.title.find(" / "));
+        return saved;
+    }
+
     int matchingDownload(const Game& game) const
     {
         const auto job = std::find_if(jobs.begin(), jobs.end(), [&](const DownloadRow& entry) {
-            return !entry.removed && (!entry.page.empty() ? entry.page == game.url :
-                                     game.id > 0 && entry.gameId == game.id);
+            return !entry.removed && downloadMatches(entry, game);
         });
         return job == jobs.end() ? -1 : static_cast<int>(job - jobs.begin());
     }
@@ -625,6 +659,7 @@ struct StoreState {
 
     void beginDownload()
     {
+        if (!canDownloadVersion()) return;
         Game* chosen = variant();
         if (!chosen) {
             return;
@@ -679,6 +714,26 @@ struct StoreState {
         notice.clear();
         if (trailerOpen) {
             if (a == BACK) trailerOpen = false;
+            return;
+        }
+        if (screenshotOpen) {
+            if (a == BACK) screenshotOpen = false;
+            if (a == LEFT) mediaSelected = std::max(0, mediaSelected - 1);
+            if (a == RIGHT) mediaSelected = std::min(std::max(0, screenshotCount - 1), mediaSelected + 1);
+            return;
+        }
+        if (versionPicker) {
+            const auto* group = currentGroup();
+            const int last = group && !group->empty() ? static_cast<int>(group->size()) - 1 : 0;
+            versionChoice = std::clamp(versionChoice, 0, last);
+            if (a == UP) versionChoice = std::max(0, versionChoice - 1);
+            if (a == DOWN) versionChoice = std::min(last, versionChoice + 1);
+            if (a == BACK || a == CONFIRM) versionPicker = false;
+            if (a == CONFIRM) {
+                variantSelected = versionChoice;
+                versionConfirmed = true;
+                detailFocus = DetailFocus::Download;
+            }
             return;
         }
 
@@ -958,13 +1013,40 @@ struct StoreState {
             key = 0;
             return;
         }
-        if (detail) { // the game page: up and down choose the entry to download
+        if (detail) {
             const std::vector<int>* group = currentGroup();
-            const int entries = group ? int(group->size()) : 1;
-            if (a == UP) variantSelected = std::max(0, variantSelected - 1);
-            if (a == DOWN) variantSelected = std::min(entries - 1, variantSelected + 1);
-            if (a == MANAGE && current() && trailerGame == current()->id && trailerCode.size > 0) trailerOpen = true;
-            if (a == CONFIRM) beginDownload();
+            const bool several = group && group->size() > 1;
+            const bool downloadReady = canDownloadVersion();
+            if (detailFocus == DetailFocus::Version && !several) detailFocus = DetailFocus::Download;
+            if ((detailFocus == DetailFocus::Download && !downloadReady) ||
+                (detailFocus == DetailFocus::Media && mediaCount() == 0))
+                detailFocus = downloadReady ? DetailFocus::Download : DetailFocus::Version;
+            if (a == UP && detailFocus != DetailFocus::Version) {
+                detailFocus = (detailFocus == DetailFocus::Download && several) || !downloadReady ?
+                    DetailFocus::Version : DetailFocus::Download;
+            }
+            if (a == DOWN) {
+                if (detailFocus == DetailFocus::Version && downloadReady) detailFocus = DetailFocus::Download;
+                else if (mediaCount() > 0) detailFocus = DetailFocus::Media;
+            }
+            if (a == LEFT && detailFocus == DetailFocus::Media) mediaSelected = std::max(0, mediaSelected - 1);
+            if (a == RIGHT && detailFocus == DetailFocus::Media) mediaSelected = std::min(mediaCount() - 1, mediaSelected + 1);
+            if (a == MANAGE && current() && mediaGame == current()->id && !trailerURL.empty()) trailerOpen = true;
+            if (a == CONFIRM) {
+                switch (detailFocus) {
+                    case DetailFocus::Version:
+                        versionChoice = variantSelected;
+                        versionPicker = true;
+                        break;
+                    case DetailFocus::Download:
+                        beginDownload();
+                        break;
+                    case DetailFocus::Media:
+                        if (mediaSelected < screenshotCount) screenshotOpen = true;
+                        else if (!trailerURL.empty()) trailerOpen = true;
+                        break;
+                }
+            }
             return;
         }
         if (a == TAB_PREV || a == TAB_NEXT) {
@@ -992,6 +1074,10 @@ struct StoreState {
         if (a == CONFIRM) {
             detail = true;
             variantSelected = 0;
+            versionConfirmed = false;
+            const auto* group = currentGroup();
+            detailFocus = group && group->size() > 1 ? DetailFocus::Version : DetailFocus::Download;
+            if (const auto* game = current()) setGameMedia(game->id, 0, "");
         }
     }
 };

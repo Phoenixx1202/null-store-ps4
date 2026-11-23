@@ -7,7 +7,11 @@ digest = hashlib.sha256()
 for argument in sys.argv[1:]:
     source = Path(argument)
     digest.update(argument.encode() + b"\0")
-    digest.update(hashlib.sha256(source.read_bytes()).digest())
+    contents = source.read_bytes()
+    if argument == "Makefile":
+        # Store-only decoder rules do not change the installed worker.
+        contents = contents.replace(b"include tools/trailer.mk\n", b"")
+    digest.update(hashlib.sha256(contents).digest())
 build_id = digest.hexdigest()
 
 for name, value in (

@@ -51,7 +51,55 @@ int main(){
     StoreState ui("assets","build/test-data");auto all=[&](StoreState&u){size_t n=0;assert(u.visible.size()==u.groups.size());for(size_t g=0;g<u.groups.size();++g){assert(!u.groups[g].empty()&&u.visible[g]==u.groups[g][0]);n+=u.groups[g].size();}return n;};assert(all(ui)==games.size()&&ui.groups.size()<games.size());
     // Entries of one game share a tile, newest version first; the game page chooses one of them.
     assert(StoreState::newerVersion("1.10","1.9")&&!StoreState::newerVersion("1.9","1.10")&&StoreState::newerVersion("1.0","")&&!StoreState::newerVersion("","1.0"));
-    {StoreState g("assets","build/test-data");g.games.clear();Game x;x.id=1;x.url="https://one.example.org/a";x.title="Dying Light (CUSA02010) [1.20]";g.games.push_back(x);x.id=2;x.title="Dying Light [1.54]";g.games.push_back(x);x.id=3;x.title="Bubsy 4D";g.games.push_back(x);assert(g.shareTitleIds());g.selected=0;g.filter();assert(g.groups.size()==2&&g.groups[0].size()==2&&g.games[g.visible[0]].id==2);g.action(CONFIRM);assert(g.detail&&g.variantSelected==0);g.action(DOWN);g.action(DOWN);assert(g.variantSelected==1&&g.variant()->id==1);g.action(CONFIRM);assert(g.downloadGame.id==1);g.sourcePicker=false;g.action(BACK);g.favorites.clear();g.action(FAVORITE);assert(g.favorites.count(2));g.favorites.clear();g.favorites.insert(1);g.action(FAVORITE);assert(g.favorites.empty());}
+    {
+        StoreState g("assets", "build/test-data");
+        g.games = {
+            {1, "Dying Light (CUSA02010) [1.20]", "", "", "https://one.example.org/a", ""},
+            {2, "Dying Light [1.54]", "", "", "https://two.example.org/a", ""},
+            {3, "Bubsy 4D", "", "", "https://one.example.org/b", ""},
+        };
+        assert(g.shareTitleIds());
+        g.selected = 0;
+        g.filter();
+        assert(g.groups.size() == 2 && g.groups[0].size() == 2 && g.games[g.visible[0]].id == 2);
+        g.action(CONFIRM);
+        assert(g.detail && g.variantSelected == 0 && !g.canDownloadVersion());
+        g.action(CONFIRM);
+        g.action(DOWN);
+        g.action(CONFIRM);
+        assert(g.variantSelected == 1 && g.variant()->id == 1 && g.canDownloadVersion() && !g.downloadRequest);
+        g.action(CONFIRM);
+        assert(g.downloadGame.id == 1 && g.downloadRequest);
+        g.sourcePicker = false;
+        g.action(BACK);
+        g.favorites.clear();
+        g.action(FAVORITE);
+        assert(g.favorites.count(2));
+        g.favorites.clear();
+        g.favorites.insert(1);
+        g.action(FAVORITE);
+        assert(g.favorites.empty());
+    }
+    {
+        StoreState queue("assets", "build/test-data");
+        queue.games = {{1, "Wrong listing", "", "", "https://one.example.org/game", ""},
+                       {2, "[PS4] Game / Episode (CUSA02010) [1.54]", "", "", "https://two.example.org/game", ""}};
+        DownloadRow job;
+        job.gameId = 1;
+        job.page = queue.games.back().url;
+        job.title = "Old title / torrent label";
+        auto text = describe(queue.downloadListing(job));
+        assert(text.title == "Game / Episode" && text.titleId == "CUSA02010");
+        job.page.clear();
+        job.gameId = 2;
+        assert(describe(queue.downloadListing(job)).title == "Game / Episode");
+        job.page = "https://two.example.org/removed";
+        job.title = "[PS4] Saved title (CUSA12345) [1.08] / Saved title.torrent";
+        text = describe(queue.downloadListing(job));
+        assert(text.title == "Saved title" && text.titleId == "CUSA12345");
+        job.title = "Big Buck Bunny connection test";
+        assert(describe(queue.downloadListing(job)).title == job.title);
+    }
     {
         StoreState ambiguous("assets","build/test-data");
         ambiguous.games = {
@@ -77,10 +125,29 @@ int main(){
     ui.settingsSelected=SETTING_REFRESH;ui.action(CONFIRM);assert(ui.refreshRequest);ui.refreshRequest=false;ui.action(BACK);assert(!ui.settings);
     // Catalogue grid, search and the game page.
     ui.action(PAGE_NEXT);assert(ui.selected==StoreState::kGridPage);ui.action(PAGE_PREV);assert(ui.selected==0);ui.action(SEARCH);assert(ui.keyboard);ui.key=0;ui.action(CONFIRM);assert(ui.searchDraft=="A"&&ui.query.empty());ui.key=39;ui.action(CONFIRM);assert(!ui.keyboard);ui.action(BACK);assert(ui.query.empty());
-    ui.action(CONFIRM);assert(ui.detail);ui.action(SETTINGS);assert(!ui.settings);ui.action(CONFIRM);assert(ui.sourcePicker&&ui.downloadRequest&&ui.downloadGame.id==ui.current()->id);ui.action(BACK);assert(!ui.sourcePicker&&ui.detail);ui.action(BACK);assert(!ui.detail);
+    ui.action(CONFIRM);assert(ui.detail);ui.action(SETTINGS);assert(!ui.settings);
+    if (!ui.canDownloadVersion()) { ui.action(CONFIRM);ui.action(CONFIRM); }
+    ui.action(CONFIRM);assert(ui.sourcePicker&&ui.downloadRequest&&ui.downloadGame.id==ui.variant()->id);ui.action(BACK);assert(!ui.sourcePicker&&ui.detail);ui.action(BACK);assert(!ui.detail);
+    ui.downloadRequest=false;
     ui.action(CONFIRM);assert(ui.detail);
-    ui.setTrailer(ui.current()->id, "https://vulcan.dl.playstation.net/example.mp4");
+    auto& versions = ui.groups[ui.selected];
+    if (versions.size() < 2) versions.push_back((versions.front() + 1) % ui.games.size());
+    ui.detailFocus = DetailFocus::Version;
+    ui.action(DOWN);assert(ui.detailFocus==DetailFocus::Version&&!ui.canDownloadVersion());
+    ui.action(CONFIRM);assert(ui.versionPicker);
+    const int defaultVersion=ui.variantSelected;
+    ui.action(DOWN);assert(ui.variantSelected==defaultVersion&&!ui.downloadRequest);
+    ui.action(CONFIRM);assert(!ui.versionPicker&&ui.variantSelected==1&&ui.detailFocus==DetailFocus::Download&&!ui.downloadRequest);
+    ui.setGameMedia(ui.current()->id, 3, "https://vulcan.dl.playstation.net/example.mp4");
+    ui.action(DOWN);assert(ui.detailFocus==DetailFocus::Media);
+    ui.action(RIGHT);ui.action(CONFIRM);assert(ui.screenshotOpen&&ui.mediaSelected==1);
+    ui.action(RIGHT);assert(ui.screenshotOpen&&ui.mediaSelected==2);
+    ui.action(RIGHT);assert(ui.mediaSelected==2);ui.action(BACK);assert(!ui.screenshotOpen);
     ui.action(MANAGE);assert(ui.trailerOpen&&ui.dialogOpen());ui.action(BACK);assert(!ui.trailerOpen&&ui.detail);
+    ui.setGameMedia(ui.current()->id, 3, "");
+    ui.action(MANAGE);
+    assert(!ui.trailerOpen && ui.trailerCode.size == 0 && ui.mediaCount() == 3);
+    ui.action(UP);assert(ui.detailFocus==DetailFocus::Download);
     DownloadRow other;other.id=80;other.gameId=ui.variant()->id;other.page="https://example.com/other-version";
     DownloadRow queued;queued.id=81;queued.page=ui.variant()->url;
     ui.jobs={other,queued};

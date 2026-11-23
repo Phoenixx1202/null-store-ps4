@@ -134,13 +134,13 @@ GameArt::Result GameArt::loadMedia(const std::string& titleId) const
         Image image;
 #if !defined(NS_HOST) && NS_SONY_ART
         std::string bytes;
-        if (!image.load(file, 640) && fetch_ && fetch_(media.screenshots[i], bytes, kMaxPictureBytes, sony::kStore) &&
+        if (!image.load(file, 1280) && fetch_ && fetch_(media.screenshots[i], bytes, kMaxPictureBytes, sony::kStore) &&
             official::isPicture(bytes) &&
-            image.decode(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), 640)) {
+            image.decode(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), 1280)) {
             writeFile(file, bytes);
         }
 #else
-        image.load(file, 640);
+        image.load(file, 1280);
 #endif
         if (!image.empty()) result.screenshots.push_back(std::move(image));
     }
@@ -196,16 +196,31 @@ const GameArtwork* GameArt::get(const std::string& titleId)
     item.state = State::Loading;
     const bool needsMedia = !item.mediaRequested;
     item.mediaRequested = true;
+    if (needsMedia) item.mediaPending = true;
 
 #ifndef NS_HOST
     if (shared_->started) {
         pthread_mutex_lock(&shared_->mutex);
+        const bool keepMedia = shared_->waiting && shared_->next == titleId && shared_->nextNeedsMedia;
+        if (shared_->waiting && shared_->next != titleId) {
+            // Re-arm a displaced lookup when its title is visited again.
+            const auto dropped = entries_.find(shared_->next);
+            if (dropped != entries_.end()) {
+                dropped->second.state = State::Missing;
+                dropped->second.missingSince = now_ - kRetrySeconds;
+                if (shared_->nextNeedsMedia) {
+                    dropped->second.mediaPending = false;
+                    dropped->second.mediaRequested = false;
+                }
+            }
+        }
         shared_->next = titleId;
-        shared_->nextNeedsMedia = needsMedia;
+        shared_->nextNeedsMedia = needsMedia || keepMedia;
         shared_->waiting = true;
         pthread_cond_signal(&shared_->wake);
         pthread_mutex_unlock(&shared_->mutex);
     } else {
+        item.mediaPending = false;
         item.state = State::Missing;
         item.missingSince = now_;
     }
@@ -228,9 +243,17 @@ void GameArt::finish(Result& result)
     }
     Entry& item = found->second;
     if (result.media) {
+        item.mediaPending = false;
+        item.art.screenshots.clear();
         for (auto& image : result.screenshots) {
-            Texture shot;
-            if (shot.create(renderer_.backend(), image, true)) item.art.screenshots.push_back(std::move(shot));
+            const float width = std::min(float(image.width()), image.height() * (16.0f / 9.0f));
+            const float height = width * (9.0f / 16.0f);
+            Image thumbnail = image.resampled((image.width() - width) * 0.5f, (image.height() - height) * 0.5f,
+                                              width, height, 240, 135);
+            thumbnail.roundCorners(14.0f);
+            GameScreenshot shot;
+            if (shot.image.create(renderer_.backend(), image) &&
+                shot.thumbnail.create(renderer_.backend(), thumbnail)) item.art.screenshots.push_back(std::move(shot));
         }
         item.art.preview = std::move(result.preview);
         return;

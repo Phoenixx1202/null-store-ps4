@@ -6,7 +6,7 @@ The application, optional service, torrent engine, installer adapter and host te
 
 - The [OpenOrbis PS4 toolchain](https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain), recent enough to declare the internal system modules (`ORBIS_SYSMODULE_INTERNAL_PAD`); the v0.5.2 installer is too old. Set `OO_PS4_TOOLCHAIN` to its folder, or pass it to `make`.
 - LLVM: `clang`, `clang++` and `ld.lld` on `PATH`, or `LLVM=<folder>`. macOS defaults to Homebrew LLVM/LLD.
-- GNU Make and Python 3. Pillow is only needed by `make icons`.
+- GNU Make, Python 3.8 or newer, a POSIX shell and tar with xz support. Pillow is only needed by `make icons`.
 - Windows: Git for Windows. The Makefile runs its recipes with Git's `sh`, so `make` works from PowerShell, cmd or Git Bash.
 
 ```
@@ -29,6 +29,12 @@ make eboot OO_PS4_TOOLCHAIN=D:/path/to/OpenOrbis-PS4-Toolchain
 | `third_party` | Piglet shader binaries (SDL2 PS4 port, zlib licence), stb, libwebp's decoder, BearSSL (MIT) and the `net` transport (OpenOrbis patterns) used by the PlayStation Store DNS bypass |
 
 The store draws with Piglet, the console's OpenGL ES 2.0 implementation (`libScePigletv2VSH`). Retail firmware has no shader compiler, so the renderer links the precompiled shader pair in `third_party/piglet_shaders`. Everything on screen is a textured quad with premultiplied alpha, collected per frame and drawn with one call per texture run.
+
+## Trailer decoder
+
+The first store build downloads the pinned FFmpeg source archive and verifies its SHA-256. To build offline, set `NULLSTORE_FFMPEG_ARCHIVE` to a local copy of [ffmpeg-8.1.3.tar.xz](https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz). The build uses Clang and the LLVM archiver, ranlib and nm to produce the MP4, H.264 and AAC libraries in `build/trailer-decoder`. Install NASM for x86 SIMD acceleration in the PS4 player. The build checks PATH or `NULLSTORE_NASM` for the assembler. If you add it to an existing build, remove `build/trailer-decoder/ready` to rebuild the decoder. The worker and host UI preview build independently.
+
+Run `sh tests/test_trailer_decoder.sh` with the FFmpeg CLI, its development libraries, libwebp and pkg-config installed to check playback, cancellation, silent video and invalid files on the host.
 
 ## PC preview
 

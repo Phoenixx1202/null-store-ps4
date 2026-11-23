@@ -28,7 +28,7 @@ public:
     void start(int source = 0, bool force = false, bool sourcesChanged = false);
 
     // Copies the worker's status line into `current`; true when it changed.
-    bool pollStatus(std::string& current);
+    bool pollStatus(std::string& current, bool& busy);
     // Moves a newly published catalogue into `games`; true when there was one.
     bool pollCatalogue(std::vector<Game>& games);
 

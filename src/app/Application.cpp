@@ -128,6 +128,7 @@ Application::~Application()
 {
     // The view and the covers hold textures: release them before the renderer.
     view_.reset();
+    trailer_.reset();
     art_.reset();
     covers_.reset();
     renderer_.shutdown();
@@ -177,6 +178,7 @@ bool Application::init()
     covers_->enableDownloads(portalNetworkFetch);
     art_ = std::make_unique<GameArt>(renderer_, data_);
     art_->enableDownloads(portalNetworkFetch);
+    trailer_ = std::make_unique<TrailerPlayer>(data_);
     view_ = std::make_unique<StoreView>(renderer_, *covers_, *art_, kAssets);
 
     pad_.init();
@@ -233,7 +235,8 @@ bool Application::frame()
     const uint64_t renderStart = sceKernelGetProcessTime();
     const bool displayReady = render();
     const uint64_t finished = sceKernelGetProcessTime();
-    if (finished - started >= 1000000 && finished >= nextStallLog_) {
+    const uint64_t slowFrame = ui_->trailerOpen ? 120000 : 1000000;
+    if (finished - started >= slowFrame && finished >= nextStallLog_) {
         nextStallLog_ = finished + 5000000;
         NS_LOG_WARN("Slow frame: input/requests=%llu ms updates=%llu ms render=%llu ms",
                     static_cast<unsigned long long>((requestsDone - started) / 1000),
@@ -359,6 +362,11 @@ void Application::handleRequests()
 {
     StoreState& ui = *ui_;
 
+    if (ui.trailerOpen != trailerWasOpen_) {
+        trailerWasOpen_ = ui.trailerOpen;
+        if (ui.trailerOpen) trailer_->open(ui.trailerURL, pad_.userId());
+        else trailer_->stop();
+    }
     if (!downloadsReady_ && ((splashHidden_ && !resumeAttempted_) || ui.downloadRequest || ui.enqueueRequest || ui.startWorker)) {
         resumeAttempted_ = true;
         downloadsReady_ = downloads_->start();
@@ -567,12 +575,12 @@ void Application::syncWorkers()
     const bool learnt = covers_->pollTitleIds(ui.titleIds);
     covers_->pollNames(ui.officialNames);
 
-    refresh_->pollStatus(ui.status);
+    refresh_->pollStatus(ui.status, ui.refreshing);
     const Game* selected = ui.current();
     const int selectedId = selected ? selected->id : -1;
     const Game* variant = ui.detail ? ui.variant() : nullptr;
     const int variantId = variant ? variant->id : -1;
-    const bool refreshed = refresh_->pollCatalogue(ui.games);
+    const bool refreshed = !ui.trailerOpen && refresh_->pollCatalogue(ui.games);
     // Title IDs learnt in the background regroup the catalogue the next time
     // the list is rebuilt (search, sort, tab...): applying them now would move
     // tiles, and the cursor, while the user is browsing.
@@ -583,10 +591,20 @@ void Application::syncWorkers()
         ui.filter(false, variantId > 0 ? variantId : selectedId);
         if (ui.detail) {
             const auto* group = ui.currentGroup();
+            bool keptVersion = false;
             ui.variantSelected = 0;
             if (group) {
-                for (size_t i = 0; i < group->size(); ++i)
-                    if (ui.games[(*group)[i]].id == variantId) ui.variantSelected = static_cast<int>(i);
+                for (size_t i = 0; i < group->size(); ++i) {
+                    if (ui.games[(*group)[i]].id != variantId) continue;
+                    ui.variantSelected = static_cast<int>(i);
+                    keptVersion = true;
+                    break;
+                }
+            }
+            if (!keptVersion && group && group->size() > 1) {
+                ui.versionConfirmed = false;
+                ui.versionPicker = false;
+                ui.detailFocus = DetailFocus::Version;
             }
         }
     }
@@ -640,10 +658,15 @@ bool Application::render()
 
     const bool firstFrame = !splashHidden_ && !displayFailureSince_;
     if (firstFrame) NS_LOG_INFO("Drawing first catalogue frame");
-    covers_->pump(static_cast<double>(now) / 1000000.0);
-    art_->pump(static_cast<double>(now) / 1000000.0);
+    if (ui_->trailerOpen) {
+        trailer_->pump(renderer_.backend());
+    } else {
+        covers_->pump(static_cast<double>(now) / 1000000.0);
+        art_->pump(static_cast<double>(now) / 1000000.0);
+    }
     renderer_.beginFrame(theme::kBackground);
-    view_->draw(*ui_, dt);
+    if (ui_->trailerOpen) view_->draw(*ui_, dt, trailer_->frame(), trailer_->status(), trailer_->progress());
+    else view_->draw(*ui_, dt);
     if (firstFrame) NS_LOG_INFO("Submitting first catalogue frame");
     if (!renderer_.endFrame()) return false;
 

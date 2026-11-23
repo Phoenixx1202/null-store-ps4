@@ -6,6 +6,7 @@
 
 #include "app/CatalogRefresh.h"
 #include "app/ListingLookup.h"
+#include "app/TrailerPlayer.h"
 #include "sources_server.h"
 #include "download_controller.h"
 #include "graphics/Renderer.h"
@@ -50,6 +51,7 @@ private:
     std::unique_ptr<CatalogRefresh> refresh_;
     std::unique_ptr<CoverCache> covers_;
     std::unique_ptr<GameArt> art_;
+    std::unique_ptr<TrailerPlayer> trailer_;
     std::unique_ptr<StoreView> view_;
     Renderer renderer_;
     input::Gamepad pad_;
@@ -57,6 +59,7 @@ private:
     std::unique_ptr<SourcesServer> setup_;
 
     bool downloadsReady_ = false;
+    bool trailerWasOpen_ = false;
     bool catalogueRefreshStarted_ = false;
     std::shared_ptr<const SourceTable> displayedSources_;
     bool resumeAttempted_ = false;

@@ -185,8 +185,7 @@ struct Media {
 
 inline bool isPreviewAddress(const std::string& url)
 {
-    // The QR encoder uses byte mode for these URLs.
-    return url.size() <= 210 && isSonyPictureAddress(url) && url.size() >= 4 &&
+    return isSonyPictureAddress(url) && url.size() >= 4 &&
            lower(url.substr(url.size() - 4)) == ".mp4";
 }
 

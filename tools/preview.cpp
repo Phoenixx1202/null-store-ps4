@@ -95,7 +95,22 @@ const std::vector<Scene>& scenes()
              }
              ui.selected = static_cast<int>(best);
              ui.action(CONFIRM);
-             ui.action(DOWN);
+             if (!ui.canDownloadVersion()) {
+                 ui.action(CONFIRM);
+                 ui.action(DOWN);
+                 ui.action(CONFIRM);
+             }
+         } },
+        { "details-version-picker", [](StoreState& ui) {
+             const auto grouped = std::find_if(ui.groups.begin(), ui.groups.end(), [](const auto& g) { return g.size() > 1; });
+             if (grouped == ui.groups.end()) return;
+             ui.selected = static_cast<int>(grouped - ui.groups.begin());
+             ui.action(CONFIRM);
+             ui.action(CONFIRM);
+         } },
+        { "details-screenshot", [](StoreState& ui) {
+             ui.action(CONFIRM);
+             ui.screenshotOpen = ui.detail;
          } },
         { "search", [](StoreState& ui) {
              ui.action(SEARCH);
@@ -133,6 +148,15 @@ const std::vector<Scene>& scenes()
              ui.sources = { { "Base game (v1.00)", "" }, { "Update (v1.05)", "" }, { "DLC pack", "" } };
          } },
         { "downloads", showQueue },
+        { "background-service", [](StoreState& ui) {
+             showQueue(ui);
+             ui.action(MANAGE);
+             ui.updateWorkerOptions(WorkerInstallState::Current, true);
+         } },
+        { "trailer-loading", [](StoreState& ui) {
+             ui.action(CONFIRM);
+             ui.trailerOpen = ui.detail;
+         } },
         { "downloads-empty", [](StoreState& ui) {
              ui.tab = TAB_DOWNLOADS;
              ui.serviceStatus = "In-app downloads | Keep NULL_store open.";

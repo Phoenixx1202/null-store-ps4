@@ -14,50 +14,77 @@
 
 ![PS4 homebrew game catalogue in NULL_store](screenshots/catalogue.png)
 
-## Watch NULL_store in action
+## Video walkthrough
 
 [![Watch the NULL_store video on YouTube](https://img.youtube.com/vi/04Qp9h_wZIk/hqdefault.jpg)](https://www.youtube.com/watch?v=04Qp9h_wZIk)
 
-[Watch the video on YouTube](https://www.youtube.com/watch?v=04Qp9h_wZIk).
+The video shows an earlier interface. The screenshots and controls below follow the current game page.
 
-> **Keep downloads running after you close NULL_store.** Install and start the optional Background Service, then confirm Downloads shows **Connected**. Transfers can continue after the store closes while the PS4 stays awake and HEN remains active. Without the connected service, keep NULL_store open. Rest mode is not supported.
+## Browse and download a game
 
-## Install a downloaded package from NULL_store
+Install the **NULL_store** PKG from [Releases](../../releases/latest) with HEN active, then open the store from the PS4 home screen.
 
-When a torrent is complete, highlight it in **Downloads**, press **Triangle**, choose a compatible complete `.pkg`, and confirm. NULL_store starts and tracks the PS4's native install task. Check PS4 Notifications for the system result. The console may not provide a percentage, so the status can move from **Installing** to **Installed** without showing intermediate progress.
+1. In the catalogue, highlight a game and press **X**. Press **Triangle** to search, enter a title and confirm on the keyboard. **L2 / R2** turn pages and the **touchpad** changes the sort order. **Square** saves or removes a favorite.
+2. If a game has several listings, open **Select version**. Compare the source, version and size where available. Use **Up / Down** and press **X** to select one. You return to the game page with **Download** highlighted. You can still pick **Change version**.
+3. Press **X** on **Download**. The store checks the source. A single torrent goes straight into the queue. If the source offers several files, highlight the one you want and press **X** to add it.
+4. Once queued, **Go to downloads** opens that transfer. You can also use **L1 / R1** to reach the **Downloads** tab from the catalogue.
 
-Only compatible, complete PKG files can be installed this way. Archives and split packages need to be extracted or joined first. Install a base game before its updates or DLC.
+![Game page with a selected release, Download, screenshots and Play trailer](screenshots/game-page.jpg)
 
-## Get started
+<details>
+<summary>See the version picker</summary>
 
-1. Download and install the [NULL_store PKG](../../releases/latest/download/NULL_store-PS4-01.01.pkg) with HEN active.
-2. Open **NULL_store** from the home screen. Browse the catalogue, search with **Triangle**, or save favorites with **Square**.
-3. Open a listing and choose **Download** to add its torrent to the queue. Once queued, **Go to downloads** jumps to that entry. When PlayStation provides a trailer or preview, press **L3** on the game page to scan its QR code and watch on your phone.
-4. Press **R1** until **Downloads** is selected. Pause or resume jobs with **X**, press **Square** to remove a job and choose whether to keep its files, or use **Triangle** on a completed job to install a compatible PKG.
-5. Press **Options** on the catalogue to open **Settings**: catalogue source, sort order, download location, Debrid service and its API key (Real-Debrid, AllDebrid, Premiumize, TorBox, Debrid-Link), official artwork and catalogue refresh.
-6. The store follows the console's language: English (the default), Brazilian Portuguese, Spanish, Turkish, French or Italian.
+![Version picker with the source, version and size on separate rows for each release](screenshots/version-picker.jpg)
 
-## Keep downloads running in the background
+</details>
 
-The main app downloads while it is open. For transfers to continue after you close it:
+### Screenshots and trailers
 
-1. In **Downloads**, press **L3** and choose **Install included worker**. Confirm the package installation and wait for it to finish.
-2. In the same menu, choose **Start worker** and wait for Downloads to show **Connected** before closing the store. When the worker is stopped, start it from this menu again. The store connects to an already running matching worker when you reopen it.
-3. Close NULL_store. The service can continue the transfer while the PS4 remains awake and HEN stays active.
+To load official media, press **Options** in the catalogue and enable **Official artwork**. Press **Down** to reach the thumbnails, choose one with **Left / Right** and press **X** for fullscreen. **Left / Right** browse the screenshots and **Circle** returns to the game page.
 
-Use **Downloads → L3 → Uninstall worker** to remove the background worker. The store keeps your queue and files. When the installed build matches the included worker, the menu also offers **Reinstall worker**. While the worker is running, choose **Stop worker** to return downloads to the open store.
+Select **Play trailer** and press **X**, or press **L3** on the game page. On servers that support streaming, the player buffers a few seconds before starting and keeps fetching ahead during playback. If the connection slows, the player refills its buffer before resuming. Press **Circle** to stop playback and further requests. A server that requires a full download gets a separate loading message. If the PS4 cannot open or play a linked preview, the QR code lets you try the same link on your phone. Games without a trailer link have no trailer action.
 
-Some consoles show a separate **NULL_store Download Worker** tile on the home screen. Manage the worker from Downloads. To remove it from the home screen, highlight the worker tile, press **Options** and select **Delete** if available. You can open that menu without starting the worker.
+<details>
+<summary>See the fullscreen viewer and trailer loading screen</summary>
 
-The service does not download in rest mode or start automatically after a reboot. Reopen NULL_store after restarting the console.
+![Fullscreen game screenshot with a picture counter and controller hints](screenshots/fullscreen.jpg)
 
-## PS4 game catalogue and BitTorrent downloads
+![Trailer loading indicator with the Circle shortcut to go back](screenshots/trailer-loading.jpg)
 
-PS4 Torrent, GameTorrent and Love Games are ready on first launch. To add another site, open **Options → Catalog source** and scan the QR code with your phone. You can also import [sources.json](SOURCES.md) from USB on first launch. The store opens with a bundled catalogue and cover thumbnails, then refreshes its sources in the background. A tile marked **2 versions** or **3 versions** opens a list of releases and their sources. Use **Up/Down** to choose one and **X** to see its download links. Open **Settings** with **Options** and choose **Refresh catalogue** to refresh it now. Starting a download fetches the torrent from its source and contacts BitTorrent trackers to find peers. Peer availability depends on the torrent and your network, so some transfers may start slowly or find no usable peers.
+</details>
 
-With a Debrid service and its API key set in **Settings**, the torrent is sent to that service instead: it downloads the game on its own servers (the queue shows its progress), then NULL_store downloads the files from the service over HTTPS, resuming a file where it stopped. The transfer's id at the service is kept next to the torrent, so pausing and resuming does not add the torrent again.
+## Manage downloads
 
-[See the PS4 test guide.](TESTING.md)
+| In Downloads | Control |
+| --- | --- |
+| Pause or resume the highlighted transfer | **X** |
+| Remove a transfer and choose whether to keep its files | **Square** |
+| Install a package from a completed transfer | **Triangle**, select a compatible `.pkg`, then **X** |
+| Manage the background worker | **L3** |
+
+![Downloads tab with transfer progress, speed and peer counts](screenshots/downloads.png)
+
+**To change where future downloads go**, open **Options → Download location** from the catalogue. Choose a drive, open a folder and select the current folder. Existing transfers keep their original locations.
+
+**To install a game**, download the base package first, then its updates or DLC. Archives and split packages need extracting or joining first. The PS4 reports the installation result in Notifications. On some consoles the status goes directly from **Installing** to **Installed**.
+
+### Keep downloads running after closing the store
+
+1. Open **Downloads → L3 → Install included worker**. Confirm installation and wait for it to finish.
+2. Open **Downloads → L3 → Start worker**. Once the menu offers **Stop worker**, you can close NULL_store and leave the PS4 awake with HEN active.
+3. To switch back to downloading in the open store, choose **Stop worker**. **Uninstall worker** removes the worker and keeps the queue and downloaded files.
+
+![Background downloads menu showing the actions for an installed, running worker](screenshots/background-service.png)
+
+Start the worker from the store after a reboot. Transfers require the PS4 to stay awake. The separate Background Service setup PKG is optional.
+
+## Catalogue sources and settings
+
+PS4 Torrent, GameTorrent and Love Games are ready on first launch. The store opens a bundled catalogue and refreshes listings from those sites in the background. **Options → Refresh catalogue** starts a manual refresh. **Options → Catalog source** lets you filter by site, press **Square** to switch between grouped and separate listings, or scan a QR code to add a source from your phone. You can also import [sources.json from USB](SOURCES.md).
+
+The store uses **BitTorrent** to download games from peers. Speed depends on which peers are reachable. If you use Real-Debrid, AllDebrid, Premiumize, TorBox or Debrid-Link, choose the service in **Settings** and enter your own API key. NULL_store can then send the torrent to the service and fetch the resulting files over HTTPS.
+
+The interface supports English, Brazilian Portuguese, Spanish, Turkish, French and Italian. [PS4 test guide](TESTING.md)
 
 ## Known limitations and test status
 
@@ -68,15 +95,6 @@ With a Debrid service and its API key set in **Settings**, the torrent is sent t
 - PS4 may not report install percentages; check Notifications for the final system result.
 
 Console testing has been performed on PS4 system software **13.00** with HEN active. The exact HEN/GoldHEN build was not recorded, and other firmware/HEN combinations have not been verified. Catalogue browsing, foreground transfers, and in-app PKG installation have been tried on-console. The Background Service's close-app behavior still needs further testing across console setups.
-
-<details>
-<summary>See the Downloads and Background Service screens</summary>
-
-![Downloads queue with a sample transfer](screenshots/downloads.png)
-
-![Background Service options](screenshots/background-service.png)
-
-</details>
 
 ## Frequently asked questions
 
@@ -96,6 +114,7 @@ The source code and host tests are available in this repository. See [BUILDING.m
 
 ## Third-party software
 
+Trailer playback uses [FFmpeg 8.1.3](https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz) for H.264 video and AAC audio. The package includes the [LGPL notice](assets/licenses/FFmpeg-LGPL-2.1.txt).
 
 The store renders with the precompiled Piglet shader binaries of the SDL2 PS4 port by cpasjuste, under the zlib license ([notice](third_party/piglet_shaders/LICENSE-SDL.txt)), and uses the public-domain [stb](third_party/stb/LICENSE) libraries for images and fonts. WebP artwork is decoded with [libwebp](third_party/libwebp/README.nullstore.txt) 1.4.0, under its [BSD license](third_party/libwebp/COPYING). Letters the store's ABeeZee font lacks (Turkish ğ, ş, İ) come from the Inter font, under the SIL Open Font License ([license](assets/LICENSE-font-fallback.txt)).
 

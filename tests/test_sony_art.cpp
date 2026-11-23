@@ -89,6 +89,7 @@ int main()
     assert(media.screenshots.size() == 3);
     assert(media.screenshots[0] == "https://apollo2.dl.playstation.net/cdn/game.jpg");
     assert(media.screenshots[2] == "https://vulcan.dl.playstation.net/img/game3.jpg");
+    assert(ns::sony::isPreviewAddress("https://vulcan.dl.playstation.net/" + std::string(240, 'a') + ".mp4"));
     assert(media.preview == "https://apollo2.dl.playstation.net/PREVIEW_TRAILER_VIDEO.mp4");
     assert(ns::sony::mediaFromContainer(R"({"mediaList":{"previews":[{"url":"https://vulcan.dl.playstation.net/stream.m3u8"}]}})").empty());
     assert(ns::sony::mediaFromContainer("{malformed").empty());

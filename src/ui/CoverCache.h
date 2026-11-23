@@ -59,6 +59,10 @@ public:
     // Uploads finished tiles and evicts old ones; call once per frame with the
     // current time in seconds.
     void pump(double nowSeconds);
+    bool loading(int gameId) const {
+        const auto it = entries_.find(gameId);
+        return it != entries_.end() && it->second.state == State::Loading;
+    }
     double now() const { return now_; }
 
     // Moves the official names learnt since the last call into `names`

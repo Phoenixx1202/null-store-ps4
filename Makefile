@@ -125,6 +125,7 @@ check-toolchain:
 	@test -f "$(TOOLCHAIN)/lib/crt1.o" || { echo "OO_PS4_TOOLCHAIN does not point to an OpenOrbis toolchain: $(TOOLCHAIN)"; exit 1; }
 	@grep -q "ORBIS_SYSMODULE_INTERNAL_PAD" "$(TOOLCHAIN)/include/orbis/_types/sysmodule.h" || { echo "This OpenOrbis toolchain is too old (no ORBIS_SYSMODULE_INTERNAL_PAD): $(TOOLCHAIN)"; exit 1; }
 
+include tools/trailer.mk
 # --- Compile ----------------------------------------------------------------------
 build/trusted_roots.h: tools/embed_trust.py assets/service/cacert.pem
 	$(PYTHON) tools/embed_trust.py

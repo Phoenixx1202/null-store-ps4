@@ -19,10 +19,15 @@
 // -----------------------------------------------------------------------------
 namespace ns {
 
+struct GameScreenshot {
+    Texture image;
+    Texture thumbnail;
+};
+
 struct GameArtwork {
     Texture background;     // 16:9
     double readyTime = 0.0; // when it was uploaded (GameArt::now): it fades in
-    std::vector<Texture> screenshots;
+    std::vector<GameScreenshot> screenshots;
     std::string preview;
 };
 
@@ -47,6 +52,10 @@ public:
     // Uploads what the worker finished; call once per frame with the current
     // time in seconds.
     void pump(double nowSeconds);
+    bool loadingMedia(const std::string& id) const {
+        const auto it = entries_.find(id);
+        return it != entries_.end() && it->second.mediaPending;
+    }
     double now() const { return now_; }
 
 private:
@@ -57,7 +66,7 @@ private:
         GameArtwork art;
         uint64_t lastUsedFrame = 0;
         double missingSince = 0.0;
-        bool mediaRequested = false;
+        bool mediaRequested = false, mediaPending = false;
     };
 
     struct Result {

@@ -11,6 +11,7 @@
 #include "ui/GameText.h"
 #include "ui/StoreState.h"
 #include "ui/Widgets.h"
+#include "ui/TrailerState.h"
 
 // -----------------------------------------------------------------------------
 // Draws a StoreState: the tab bar, the catalogue grid with the focused game's
@@ -28,7 +29,8 @@ public:
 
     // Draws one frame (between Renderer::beginFrame and endFrame). `dt` is the
     // time since the previous frame, in seconds.
-    void draw(StoreState& state, float dt);
+    void draw(StoreState& state, float dt, const Texture* trailerFrame = nullptr,
+              TrailerState trailerStatus = TrailerState::Buffering, int trailerProgress = -1);
 
 private:
     // Catalogue
@@ -37,9 +39,12 @@ private:
     void drawGrid(StoreState& s);
     // `index`: the tile's place in s.visible (and its group in s.groups).
     void drawCard(const StoreState& s, int index, const Rect& slot, float focus, float sweep, int order);
-    float drawVersions(StoreState& s, float x, float y);
+    void drawVersionPicker(const StoreState& s);
+    void drawScreenshot(StoreState& s);
+    void drawFullscreen(const Texture& texture, const std::string& caption);
+    void drawTrailer(const StoreState& s, TrailerState status, int progress);
+    void spinner(float x, float y, float radius);
     void drawQr(const QrSymbol& code, float x, float y, int boxSize);
-    void drawTrailer(const StoreState& s);
     void drawCatalogueHints(StoreState& s);
     void drawGamePage(StoreState& s, float amount);
     // The game's name, title ID and version as the screens show them.
@@ -49,7 +54,7 @@ private:
 
     // Download queue
     void drawDownloads(StoreState& s);
-    void drawJob(const DownloadRow& job, const Rect& rect, bool focused);
+    void drawJob(const DownloadRow& job, const std::string& title, const Rect& rect, bool focused);
 
     // Dialogs
     Rect dialog(float width, float height, const std::string& title);
@@ -78,7 +83,7 @@ private:
     float dt_ = 0.0f;
     std::string noticeText_; // the notice on screen, and for how long
     float noticeAge_ = 0.0f;
-    float loadingTime_ = 0.0f; // the bar of "Checking torrent link"
+    float spinnerPhase_ = 0.0f;
     Smooth tabX_;                    // the white pill sliding between tabs
     Smooth gridScroll_;              // first row in view, in rows
     int gridTopRow_ = 0;

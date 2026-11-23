@@ -31,7 +31,7 @@ jobs:
       - name: Install LLVM, make and Python
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang lld llvm make python3 python3-pil
+          sudo apt-get install -y --no-install-recommends clang lld llvm make nasm python3 python3-pil
           clang --version
           ld.lld --version
 
