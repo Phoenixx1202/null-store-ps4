@@ -112,10 +112,16 @@ The app saves downloads on your PS4 and may upload pieces of those files to othe
 
 The source code and host tests are available in this repository. See [BUILDING.md](BUILDING.md) for build requirements, [ROADMAP.md](ROADMAP.md) for planned improvements, and [CONTRIBUTING.md](CONTRIBUTING.md) to get involved. NULL_store is released under [GPL-3.0](LICENSE). Third-party components retain their respective licenses.
 
+## Thanks
+
+Special thanks to Phoenixx1202 for the Piglet storefront redesign, grouped game listings, Debrid support and translations. [Storefront redesign PR](https://github.com/lastrowcritic/null-store-ps4/pull/6)
+
+Thanks to notnameddev for phone-based catalogue setup, and to everyone who tested builds and reported issues. [Phone setup PR](https://github.com/lastrowcritic/null-store-ps4/pull/5)
+
 ## Third-party software
 
 Trailer playback uses [FFmpeg 8.1.3](https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz) for H.264 video and AAC audio. The package includes the [LGPL notice](assets/licenses/FFmpeg-LGPL-2.1.txt).
 
 The store renders with the precompiled Piglet shader binaries of the SDL2 PS4 port by cpasjuste, under the zlib license ([notice](third_party/piglet_shaders/LICENSE-SDL.txt)), and uses the public-domain [stb](third_party/stb/LICENSE) libraries for images and fonts. WebP artwork is decoded with [libwebp](third_party/libwebp/README.nullstore.txt) 1.4.0, under its [BSD license](third_party/libwebp/COPYING). Letters the store's ABeeZee font lacks (Turkish ğ, ş, İ) come from the Inter font, under the SIL Open Font License ([license](assets/LICENSE-font-fallback.txt)).
 
-[Download checksums](SHA256SUMS.txt)
+[Latest release checksums](../../releases/latest/download/SHA256SUMS.txt)
