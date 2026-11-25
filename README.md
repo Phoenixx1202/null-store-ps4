@@ -5,7 +5,7 @@
   <p>Browse game listings, queue torrent downloads, install compatible PKG files, or keep transfers running with the optional background service.</p>
   <p>YOUR SYSTEM. YOUR RULES.</p>
   <p>
-    <a href="../../releases/latest"><img alt="Download PS4 packages" src="https://img.shields.io/badge/Download-PS4%20PKGs-087652?style=for-the-badge"></a>
+    <a href="../../releases/latest"><img alt="Download the PS4 package" src="https://img.shields.io/badge/Download-PS4%20PKG-087652?style=for-the-badge"></a>
     <a href="https://www.youtube.com/watch?v=04Qp9h_wZIk"><img alt="Watch the video" src="https://img.shields.io/badge/Watch-Video-087652?style=for-the-badge"></a>
     <a href="ROADMAP.md"><img alt="View the roadmap" src="https://img.shields.io/badge/View-Roadmap-12332A?style=for-the-badge"></a>
     <a href="TESTING.md"><img alt="Read the test guide" src="https://img.shields.io/badge/Read-Test%20guide-12332A?style=for-the-badge"></a>
@@ -76,7 +76,7 @@ Select **Play trailer** and press **X**, or press **L3** on the game page. On se
 
 ![Background downloads menu showing the actions for an installed, running worker](screenshots/background-service.png)
 
-Start the worker from the store after a reboot. Transfers require the PS4 to stay awake. The separate Background Service setup PKG is optional.
+Start the worker from the store after a reboot. Transfers require the PS4 to stay awake.
 
 ## Catalogue sources and settings
 
@@ -98,9 +98,9 @@ Console testing has been performed on PS4 system software **13.00** with HEN act
 
 ## Frequently asked questions
 
-### Do I need to install the Background Service package separately?
+### Where do I install the download worker?
 
-The store includes the download worker. Install and start it from **Downloads → L3** to continue a transfer after closing the store. The separate Background Service setup app offers another way to install and start the same worker. Foreground downloads work with the store alone.
+The store package includes the worker. Install and start it from **Downloads → L3** to continue a transfer after closing the store. Foreground downloads work with the store alone.
 
 ## Disclaimer
 

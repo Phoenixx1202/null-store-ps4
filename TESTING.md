@@ -4,7 +4,7 @@
 
 Console testing has been performed on PS4 system software **13.00** with HEN active. The exact HEN/GoldHEN build was not recorded. Other firmware and HEN combinations have not been verified. Catalogue browsing, foreground transfers, and in-app PKG installation have been tried on-console. The Background Service's transfer continuity after closing NULL_store needs further testing across console setups.
 
-Install the latest NULL_store package with HEN active and keep the PS4 awake during transfer checks. [Latest packages](../../releases/latest)
+Install the latest NULL_store package with HEN active and keep the PS4 awake during transfer checks. [Latest package](../../releases/latest)
 
 ## Test checklist
 
