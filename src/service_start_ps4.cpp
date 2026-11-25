@@ -48,7 +48,7 @@ static bool restore(JailbreakBackup&backup,std::string&error){long code=backup.c
 static bool remount(bool readonly,std::string&error){const char*names[]={"fstype","fspath","from","large","timezone","async","ignoreacl","dirmask","mask"};const char*values[]={"exfatfs","/system","/dev/da0x4.crypt","yes","static","","","511","511"};iovec args[18];for(int i=0;i<9;++i){args[i*2].iov_base=(void*)names[i];args[i*2].iov_len=strlen(names[i])+1;args[i*2+1].iov_base=(void*)values[i];args[i*2+1].iov_len=strlen(values[i])+1;}long r=portalSystemCall(378,args,18,0x10000|(readonly?1:0));serviceSetupLog(false,"nmount /system %s => %ld%s%s",readonly?"read-only":"read-write",r,r<0?" / ":"",r<0?strerror((int)-r):"");if(r){error=readonly?"Service copied, but /system could not be restored read-only. Restart the console before continuing.":"Could not remount /system for service setup (kernel result "+std::to_string(r)+").";return false;}return true;}
 static bool ping(std::string&version){PortalIPC::Writer w;w.u32(PortalIPC::PING);std::string reply,error;if(!PortalIPC::request(w.bytes,reply,error))return false;try{PortalIPC::Reader r(reply);if(r.u32()!=PortalIPC::VERSION)return false;version=r.string();return true;}catch(...){return false;}}
 static bool launchRooted(std::string&error){
-    std::string executable;if(serviceReadRegular(DEST+"/eboot.bin",executable)!=1){error="Service not installed. Open Downloads and press L3 to set it up.";return false;}
+    std::string executable;if(serviceReadRegular(DEST+"/eboot.bin",executable)!=1){error="Background service is not installed.";return false;}
     const std::string logPath=std::string(nullStoreDataRoot())+"/service.log";
     auto previous=readFile(logPath);size_t lastRuntimeSize=previous.size();
     int module=sceKernelLoadStartModule("/system/common/lib/libSceSystemService.sprx",0,0,0,0,0);
@@ -68,9 +68,9 @@ static bool launchRooted(std::string&error){
     error=std::string(message)+(details.empty()?"See service-setup.log; no new runtime log.":details);serviceSetupLog(false,"%s",error.c_str());return false;
 }
 bool portalServiceLaunch(std::string&error){
-    std::string build;if(ping(build))return true;struct stat installed;if(portalPathInfo((DEST+"/eboot.bin").c_str(),&installed)){error="Service not installed. Open Downloads and press L3 to set it up.";return false;}
+    std::string build;if(ping(build))return true;struct stat installed;if(portalPathInfo((DEST+"/eboot.bin").c_str(),&installed)){error="Background service is not installed.";return false;}
     std::string marker;
-    if(serviceReadRegular(DEST+"/version.txt",marker)==1&&marker!=SERVICE_INSTALL_MARKER){error="Open Downloads and press L3 to update the background service.";return false;}
+    if(serviceReadRegular(DEST+"/version.txt",marker)==1&&marker!=SERVICE_INSTALL_MARKER){error="The background service needs an update.";return false;}
     if(!prepareQueueLockAccess(error)){serviceSetupLog(false,"service launch preparation failed: %s",error.c_str());return false;}
     JailbreakBackup backup={};if(!grant(backup,error)){serviceSetupLog(false,"launch permission failure: %s",error.c_str());return false;}
     bool ok=launchRooted(error);bool restored=restore(backup,error);return ok&&restored;

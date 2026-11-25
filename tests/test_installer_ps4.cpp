@@ -2,6 +2,7 @@
 #include "../src/installer_ps4.cpp"
 #include <cassert>
 #include <iostream>
+#include <unistd.h>
 static int initCalls=0,registerCalls=0,startCalls=0,resumeCalls=0,initialCalls=0,termCalls=0,nativeCalls=0;
 static int initResult=0,registerResult=0,taskId=42,foregroundResult=0,foregroundUser=7,initialResult=0,initialUser=9,progressResult=0,startResult=0,resumeResult=0;
 static uint32_t bgftModuleResult=0;static int nativeResult=101,nativeStartResult=0;
@@ -10,6 +11,29 @@ static int bgftModuleCalls=0;
 static const char*sandboxWord="testSandbox";static bool globalMissing=false,sandboxMissing=false;
 static std::vector<std::string>mappedNames={"libSceLibcInternal"};
 static Progress returnedProgress={};
+static int workerPresent=1, removeCalls=0, removeResult=0;
+static bool installingWorker=false;
+static int userRemoveResult=-1, userRemoveCalls=0;
+static int removeWorkerForUser(const char* title, int32_t user) {
+    assert(std::string(title) == "NULL00003" && user == foregroundUser);
+    ++userRemoveCalls;
+    if (!userRemoveResult) workerPresent=0;
+    return userRemoveResult;
+}
+static int initUtil(){ return 0; }
+static int existsWorker(const char* title,int32_t* present){assert(std::string(title)=="NULL00003");*present=workerPresent;return 0;}
+static bool isInstallingWorker(const char* content){assert(std::string(content)=="IV0000-NULL00003_00-NULLSTOREWORKER0");return installingWorker;}
+static int removeWorker(const char* title){assert(std::string(title)=="NULL00003");++removeCalls;if(!removeResult)workerPresent=0;return removeResult;}
+extern "C" int32_t sceKernelDlsym(int32_t,const char* name,void** out){
+    std::string symbol=name;
+    if(symbol=="sceAppInstUtilInitialize"||symbol=="sceAppInstUtilTerminate")*out=(void*)initUtil;
+    else if(symbol=="sceAppInstUtilAppExists")*out=(void*)existsWorker;
+    else if(symbol=="sceAppInstUtilAppIsInInstalling")*out=(void*)isInstallingWorker;
+    else if(symbol=="sceAppInstUtilAppUnInstall")*out=(void*)removeWorker;
+    else if(symbol=="sceAppInstUtilAppUnInstallByUser")*out=(void*)removeWorkerForUser;
+    else return -1;
+    return 0;
+}
 extern "C" int32_t sceKernelGetModuleList(uint32_t*handles,size_t size,size_t*count){assert(size>=mappedNames.size());*count=mappedNames.size();for(size_t i=0;i<*count;i++)handles[i]=(uint32_t)i+20;return 0;}
 extern "C" int32_t sceKernelGetModuleInfo(uint32_t h,OrbisKernelModuleInfo*info){assert(info->size==sizeof *info&&h>=20&&h-20<mappedNames.size());snprintf(info->name,sizeof info->name,"%s",mappedNames[h-20].c_str());return 0;}
 extern "C" uint32_t sceSysmoduleLoadModuleInternal(enum OrbisSysModuleInternal module){
@@ -51,6 +75,58 @@ static void resetInit(){
     mappedNames={"libSceLibcInternal"};
 }
 int main(){
+    {
+        char directory[] = "/tmp/nullstore-worker-check-XXXXXX";
+        assert(mkdtemp(directory));
+        const std::string installed = std::string(directory) + "/installed.pkg";
+        const std::string bundled = std::string(directory) + "/bundled.pkg";
+        std::string header(0x460, '\0');
+        header.replace(0, 4, "\x7f" "CNT");
+        header[0x440] = 1;
+        assert(writeFile(bundled, header));
+        assert(workerPackageMatch(installed.c_str(), bundled.c_str()) == WorkerPackageMatch::Unverified);
+        assert(writeFile(installed, header));
+        assert(workerPackageMatch(installed.c_str(), bundled.c_str()) == WorkerPackageMatch::Current);
+        header[0x440] = 2;
+        assert(writeFile(installed, header));
+        assert(workerPackageMatch(installed.c_str(), bundled.c_str()) == WorkerPackageMatch::Different);
+        assert(writeFile(installed, header.substr(0, 0x445)));
+        assert(workerPackageMatch(installed.c_str(), bundled.c_str()) == WorkerPackageMatch::Unverified);
+        const std::string manifest = std::string(directory) + "/app.json";
+        header.resize(0x1000, '\0');
+        header[0xFE0] = static_cast<char>(0xAB);
+        assert(writeFile(bundled, header));
+        assert(writeFile(manifest, "{\"packageDigest\":\"aB" + std::string(62, '0') + "\"}"));
+        assert(workerManifestMatch(manifest.c_str(), bundled.c_str()) == WorkerPackageMatch::Current);
+        assert(writeFile(manifest, "{\"packageDigest\":\"ee" + std::string(62, '0') + "\"}"));
+        assert(workerManifestMatch(manifest.c_str(), bundled.c_str()) == WorkerPackageMatch::Different);
+        assert(writeFile(manifest, "{\"packageDigest\":\"broken\"}"));
+        assert(workerManifestMatch(manifest.c_str(), bundled.c_str()) == WorkerPackageMatch::Unverified);
+        assert(unlink(installed.c_str()) == 0 && unlink(bundled.c_str()) == 0);
+        assert(unlink(manifest.c_str()) == 0 && rmdir(directory) == 0);
+    }
+    {
+        mappedNames.push_back("libSceAppInstUtil");
+        std::string error;
+        installingWorker=true;
+        assert(!ps4InstallBackend().removeWorker(error) && !removeCalls);
+        installingWorker=false; removeResult=-1; error.clear();
+        assert(!ps4InstallBackend().removeWorker(error) && workerPresent && removeCalls==1);
+        removeResult=0; error.clear();
+        assert(ps4InstallBackend().removeWorker(error) && !workerPresent && removeCalls==2);
+        assert(ps4InstallBackend().removeWorker(error) && removeCalls==2);
+        workerPresent=1; removeResult=-1; userRemoveResult=0; error.clear();
+        assert(ps4InstallBackend().removeWorker(error) && !workerPresent && userRemoveCalls==2);
+        workerPresent=1;
+        workerInstallConfirmedThisSession=true;
+        assert(ps4WorkerInstallVerified());
+        installingWorker=true;
+        assert(!ps4WorkerInstallVerified());
+        installingWorker=false;
+        workerPresent=0;
+        assert(!ps4WorkerInstallVerified() && !workerInstallConfirmedThisSession);
+        mappedNames.pop_back();
+    }
  auto api=ps4InstallBackend();InstallPackage pkg;pkg.path="/data/portal-store/downloads/7/base.pkg";pkg.name="Base";pkg.contentId="IV0000-TEST00001_00-TESTPACKAGE00001";pkg.titleId="TEST00001";pkg.contentType=0x1a;pkg.bytes=12ULL*1024*1024*1024;
  std::string error;int id=123;
  assert(api.registerTask(pkg,id,error)&&id==42&&initCalls==1&&initialCalls==0);

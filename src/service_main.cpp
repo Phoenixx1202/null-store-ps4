@@ -14,18 +14,32 @@ int main(int argc,char**argv){if(argc<2)return 1;return runPortalService(argv[1]
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#ifdef NULLSTORE_PACKAGED_WORKER
+#include "worker_entry.h"
+#else
 static void serviceEarlyStartup() __attribute__((constructor));
 static void serviceEarlyStartup(){serviceLogReopen();serviceLogInstallCrashHandlers();serviceLog("early constructor reached; entering C++ runtime, pid=%d uid=%d",getpid(),getuid());}
+#endif
 static void serviceAtExit(){serviceLog("C runtime exit handler reached");}
+#ifdef NULLSTORE_PACKAGED_WORKER
+int runPackagedWorker(){
+    serviceLogReopen();
+    serviceLogInstallCrashHandlers();
+#else
 int main(){
+#endif
     serviceLog("main entered; pid=%d uid=%d",getpid(),getuid());
     if(atexit(serviceAtExit)!=0)serviceLog("could not register C runtime exit marker");
+#ifdef NULLSTORE_PACKAGED_WORKER
+    serviceLog("Packaged worker started by request from the Downloads menu or service setup");
+#else
     std::string error;
     serviceLog("permission elevation begin");
     bool permitted=portalServicePrivileges(error);
     serviceLogReopen();
     serviceLog("permission elevation result=%d uid=%d error=%s",permitted?1:0,getuid(),error.c_str());
-    if(!permitted)return 10;
+    if(!permitted)serviceLog("SDK unavailable; trying daemon registration and queue access with existing permissions");
+#endif
     OrbisUserServiceInitializeParams p={};p.priority=256;
     serviceLog("sceUserServiceInitialize begin");
     int user=sceUserServiceInitialize(&p);

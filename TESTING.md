@@ -4,16 +4,20 @@
 
 Console testing has been performed on PS4 system software **13.00** with HEN active. The exact HEN/GoldHEN build was not recorded. Other firmware and HEN combinations have not been verified. Catalogue browsing, foreground transfers, and in-app PKG installation have been tried on-console. The Background Service's transfer continuity after closing NULL_store needs further testing across console setups.
 
-Install the latest NULL_store package with HEN active and keep the PS4 awake during transfer checks. [Latest packages](../../releases/latest)
+Install the latest NULL_store package with HEN active and keep the PS4 awake during transfer checks. [Latest package](../../releases/latest)
 
 ## Test checklist
 
 | Check | What to do | What to look for |
 | --- | --- | --- |
 | Browse and search | Open the catalogue. Press **Triangle** to search, then **Square** to save a favorite. | Search narrows results and the saved title appears in Favorites. |
-| Try a download | Press **R3** for Downloads, then **L3** and choose **Test torrent connection (one piece only)**. | The test stops after about 256 KB. Peer availability varies; no peers may be found on some networks. |
+| Choose a version | Open a game with multiple versions, choose **Select version**, highlight a source and press **X**. | The game page shows your chosen release and focuses **Download**. The queue changes only after you confirm the download. |
+| Try a download | Press **X** on **Download** and choose a torrent if prompted. Open **Go to downloads**. | The queue opens on the matching job. Transfer speed depends on reachable peers. |
+| Browse screenshots | With **Official artwork** enabled, select a screenshot and press **X**. Try **Left / Right**, then **Circle**. | The screenshot fills the viewer, the counter follows your selection and **Circle** returns to the game. |
+| Play a trailer | On a page with **Play trailer**, press **L3**. Try **Circle** while loading, then reopen it. | The loading indicator animates as the player buffers the start of the video. On a server with range support, playback starts while the rest streams in the background. Try a slow connection and check that the player refills its buffer before resuming. **Circle** returns to the listing. |
+| Cancel a download | Highlight a job in Downloads, press **Square** and choose whether to remove its files. Repeat with another job using the other option. | Both jobs leave the list. Only the files selected for deletion are removed. |
 | Resume a transfer | Start an authorized transfer long enough to pause. Pause it, close the app, reopen it, and resume. | The same job remains listed and continues from saved progress. |
-| Test Background Service | In Downloads, press **L3** and select **Start / Install service**. Alternatively, open the optional **NULL_store Background Service** app and press **X**. Wait until Downloads shows **Connected**, start a transfer, close NULL_store, wait, then reopen it. Keep the console awake and HEN active. | The transfer should advance while NULL_store is closed. This is the feature that needs the most additional testing across firmware/HEN versions. |
+| Test Background Service | In **Downloads → L3**, install the included worker, then select **Start worker**. Wait until the worker menu offers **Stop worker**, start a transfer, close NULL_store, wait, then reopen it. Keep the console awake and HEN active. | The transfer should advance while NULL_store is closed. This is the feature that needs the most additional testing across firmware/HEN versions. |
 | Install a PKG | Highlight a completed download with a compatible, complete PKG. Press **Triangle**, select the package, and confirm. | The status should reach **Installed**. The PS4 may omit percentages; check Notifications for the system result. |
 
 ## Known limitations
@@ -30,4 +34,6 @@ Include your PS4 firmware and HEN version, the steps you tried, and the exact me
 | --- | --- |
 | Torrent stays on connecting or fails | `torrent.log` |
 | Background Service cannot start | `service-setup.log` and `service.log` |
+| Black screen when opening the store or a game | `app.log`. Record the console clock time and whether the PS button responds. |
+| Trailer fails to play | `app.log` records the startup buffer, time spent waiting for a refill, and the number of stalls. |
 | PKG installation fails | `installer.log` or `installer-<uid>.log` |

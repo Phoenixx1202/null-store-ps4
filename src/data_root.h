@@ -6,7 +6,7 @@
 
 static inline const char *nullStoreDataRoot(void) {
     struct stat info;
-    // Preserve absolute download paths and any system installs still using them.
+    // Retain the previous data directory while migration is deferred or unavailable.
     if (portalPathInfo(NULL_STORE_DATA_ROOT, &info) != 0 && errno == ENOENT &&
         portalPathInfo(NULL_STORE_LEGACY_DATA_ROOT, &info) == 0 && S_ISDIR(info.st_mode)) {
         return NULL_STORE_LEGACY_DATA_ROOT;

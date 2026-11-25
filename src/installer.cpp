@@ -1,6 +1,7 @@
 #include "path_info.h"
 #include "installer.h"
 #include "queue_store.h"
+#include "worker_package.h"
 #include "download_paths.h"
 #include "install_log.h"
 #include "bgft_abi.h"
@@ -23,11 +24,43 @@ bool inspectPackage(const std::string&path,InstallPackage&pkg,std::string&error)
     if(cid[6]!='-'||cid[16]!='_'||cid[19]!='-'){error="Invalid package content ID";return false;}uint32_t type=big32(h+0x74);if(type!=0x1a&&type!=0x1b&&type!=0x1c&&type!=0x1e){error="Unsupported PS4 package type";return false;}
     pkg.path=path;pkg.bytes=size;pkg.contentId=cid;pkg.titleId=cid.substr(7,9);pkg.contentType=type;pkg.contentFlags=big32(h+0x78);pkg.patch=NullBGFT::isPatch(type,pkg.contentFlags);auto slash=path.find_last_of('/');pkg.name=path.substr(slash==std::string::npos?0:slash+1);pkg.note=pkg.patch?"Update package; base game required":"Ready to install";return true;
 }
+static const char workerContentId[] = "IV0000-NULL00003_00-NULLSTOREWORKER0";
+#ifdef PORTAL_HOST
+static const char workerSource[] = "assets/worker/download-worker.pkg";
+#else
+static const char workerSource[] = "/app0/assets/worker/download-worker.pkg";
+#endif
+static std::string workerPath(const std::string& root) {
+    return root + "/bundled-download-worker-1.1.pkg";
+}
+static std::vector<InstallPackage> prepareWorker(const std::string& root, std::string& error) {
+    InstallPackage pkg;
+    if (!inspectPackage(workerSource, pkg, error) || pkg.contentId != workerContentId) {
+        error = "The included Download Worker package is missing or invalid.";
+        return {};
+    }
+    const auto bytes = readFile(workerSource);
+    if (bytes.size() != pkg.bytes) {
+        error = "Could not read the complete Download Worker package.";
+        return {};
+    }
+    const auto path = workerPath(root);
+    std::string cached;
+    if (readQueueFile(path, cached) != 1 || cached != bytes) {
+        if (!durableReplace(path, bytes, 0644)) {
+            error = "Could not stage the Download Worker: " + std::string(strerror(errno));
+            return {};
+        }
+    }
+    pkg.path = path;
+    pkg.name = "NULL_store Download Worker";
+    return {pkg};
+}
 static void scanDir(const std::string&path,int job,std::vector<InstallPackage>&v,std::string&error,int depth,int&entries){if(depth>16||entries>8192||v.size()>=128)return;struct stat root;if(portalPathInfo(path.c_str(),&root)||!S_ISDIR(root.st_mode))return;DIR*d=opendir(path.c_str());if(!d){error="Cannot read downloaded files";return;}while(auto*e=readdir(d)){std::string name=e->d_name;if(name=="."||name=="..")continue;if(++entries>8192)break;std::string p=path+"/"+name;struct stat st;if(portalPathInfo(p.c_str(),&st))continue;if(S_ISDIR(st.st_mode))scanDir(p,job,v,error,depth+1,entries);else if(S_ISREG(st.st_mode)&&name.size()>4&&lower(name.substr(name.size()-4))==".pkg"){InstallPackage pkg;std::string why;if(inspectPackage(p,pkg,why)){pkg.jobId=job;v.push_back(pkg);}else error=name+": "+why;}}closedir(d);}
-std::vector<InstallPackage> scanPackages(const std::string&root,int job,const std::string&downloadDir,std::string&error){std::vector<InstallPackage>v;int entries=0;if(job<=0||!validDownloadDir(root,job,downloadDir)){error="Select a valid completed download first";installLog("scan packages rejected: job=%d path=%s",job,downloadDir.c_str());return v;}std::string path=downloadDir;installLog("scan packages begin: job=%d path=%s",job,path.c_str());scanDir(path,job,v,error,0,entries);std::sort(v.begin(),v.end(),[](const InstallPackage&a,const InstallPackage&b){return lower(a.name)<lower(b.name);});if(v.empty()&&error.empty())error="No complete .pkg files found. Archives must be extracted first.";installLog("scan packages complete: job=%d entries=%d packages=%zu error=%s",job,entries,v.size(),error.c_str());return v;}
+std::vector<InstallPackage> scanPackages(const std::string&root,int job,const std::string&downloadDir,std::string&error){std::vector<InstallPackage>v;int entries=0;if(job<=0||!validDownloadDir(root,job,downloadDir)||!downloadDirectoryChain(downloadDir)){error="Select a valid completed download first";installLog("scan packages rejected: job=%d path=%s",job,downloadDir.c_str());return v;}std::string path=downloadDir;installLog("scan packages begin: job=%d path=%s",job,path.c_str());scanDir(path,job,v,error,0,entries);std::sort(v.begin(),v.end(),[](const InstallPackage&a,const InstallPackage&b){return lower(a.name)<lower(b.name);});if(v.empty()&&error.empty())error="No complete .pkg files found. Archives must be extracted first.";installLog("scan packages complete: job=%d entries=%d packages=%zu error=%s",job,entries,v.size(),error.c_str());return v;}
 std::vector<InstallPackage> scanPackages(const std::string&root,int job,std::string&error){return scanPackages(root,job,defaultDownloadDir(root,job),error);}
 static std::string cleanInstall(std::string s){for(char&c:s)if(c=='\t'||c=='\r'||c=='\n')c=' ';return s;}
-PackageInstaller::PackageInstaller(std::string p,InstallBackend b):root(p),backend(b){pthread_mutex_init(&mutex,0);pthread_cond_init(&changed,0);auto raw=loadQueue(root+"/installs.tsv");size_t p0=0;while(p0<raw.size()&&tasks.size()<256){auto end=raw.find('\n',p0);if(end==std::string::npos)break;auto line=raw.substr(p0,end-p0);p0=end+1;std::vector<std::string>f;size_t k=0;for(;;){auto e=line.find('\t',k);f.push_back(line.substr(k,e-k));if(e==std::string::npos)break;k=e+1;}if(f.size()!=9)continue;InstallPackage t;t.jobId=atoi(f[0].c_str());t.path=f[1];t.name=f[2];t.contentId=f[3];t.bytes=strtoull(f[4].c_str(),0,10);t.taskId=atoi(f[5].c_str());int state=atoi(f[6].c_str());t.percent=std::max(-1,std::min(100,atoi(f[7].c_str())));t.note=f[8];bool safe=pathInsideDownloadDir(root,t.jobId,defaultDownloadDir(root,t.jobId),t.path);for(int i=0;i<8&&!safe;i++){std::string dir="/mnt/usb"+std::to_string(i)+"/NULL_store/downloads/"+std::to_string(t.jobId);safe=pathInsideDownloadDir(root,t.jobId,dir,t.path);}if(t.jobId<=0||!safe||state<0||state>6||t.taskId<0)continue;t.titleId=t.contentId.size()==36?t.contentId.substr(7,9):"";t.state=InstallState(state);if(t.state==InstallState::Error&&t.note.find("System task registered, but its recovery record") == 0){t.state=InstallState::Installing;t.percent=-1;t.note="Installing";}tasks.push_back(t);}}
+PackageInstaller::PackageInstaller(std::string p,InstallBackend b,bool allowWorker):root(p),backend(b),workerPackages(allowWorker){pthread_mutex_init(&mutex,0);pthread_cond_init(&changed,0);auto raw=loadQueue(root+"/installs.tsv");size_t p0=0;while(p0<raw.size()&&tasks.size()<256){auto end=raw.find('\n',p0);if(end==std::string::npos)break;auto line=raw.substr(p0,end-p0);p0=end+1;std::vector<std::string>f;size_t k=0;for(;;){auto e=line.find('\t',k);f.push_back(line.substr(k,e-k));if(e==std::string::npos)break;k=e+1;}if(f.size()!=9)continue;InstallPackage t;t.jobId=atoi(f[0].c_str());t.path=migratedDownloadPath(root,f[1]);t.name=f[2];t.contentId=f[3];t.bytes=strtoull(f[4].c_str(),0,10);t.taskId=atoi(f[5].c_str());int state=atoi(f[6].c_str());t.percent=std::max(-1,std::min(100,atoi(f[7].c_str())));t.note=f[8];bool safe=!downloadJobDirFromFile(root,t.jobId,t.path).empty();if(t.jobId<0)continue;if(t.jobId==0)safe=f[0]=="0"&&(t.path==workerPath(root)||t.path==root+"/bundled-download-worker.pkg")&&t.contentId==workerContentId;if(!safe||state<0||state>6||t.taskId<0)continue;t.titleId=t.contentId.size()==36?t.contentId.substr(7,9):"";t.state=InstallState(state);if(t.state==InstallState::Error&&t.note.find("System task registered, but its recovery record") == 0){t.state=InstallState::Installing;t.percent=-1;t.note="Installing";}tasks.push_back(t);}}
 PackageInstaller::~PackageInstaller(){pthread_mutex_lock(&mutex);quitting=true;pthread_cond_broadcast(&changed);pthread_mutex_unlock(&mutex);if(started)pthread_join(worker,0);pthread_cond_destroy(&changed);pthread_mutex_destroy(&mutex);}
 bool PackageInstaller::start(){if(started)return true;started=pthread_create(&worker,0,entry,this)==0;return started;}
 void* PackageInstaller::entry(void*p){static_cast<PackageInstaller*>(p)->loop();return 0;}
@@ -44,8 +77,88 @@ void PackageInstaller::scan(int job){scan(job,defaultDownloadDir(root,job));}
 void PackageInstaller::scan(int job,const std::string&dir){pthread_mutex_lock(&mutex);scanJob=viewJob=job;scanDir=dir;scanPending=loading=true;view.clear();viewError.clear();++version;pthread_cond_signal(&changed);pthread_mutex_unlock(&mutex);}
 void PackageInstaller::submit(const std::string&path){pthread_mutex_lock(&mutex);for(auto&p:view)if(p.path==path){if(p.state==InstallState::Registering||(p.taskId>=0&&p.state!=InstallState::Error&&p.state!=InstallState::Unavailable)){viewError="Already handed to the system installer. Check PS4 Notifications.";++version;break;}bool duplicate=busyPath==path||std::find_if(requests.begin(),requests.end(),[&](const InstallPackage&r){return r.path==path;})!=requests.end();if(!duplicate){requests.push_back(p);p.state=InstallState::Registering;p.note="Preparing system installation";++version;pthread_cond_signal(&changed);}break;}pthread_mutex_unlock(&mutex);}
 bool PackageInstaller::snapshot(uint64_t&v,std::vector<InstallPackage>&out,bool&busy,std::string&error){pthread_mutex_lock(&mutex);bool changed=v!=version;if(changed){out=view;busy=loading;error=viewError;if(error.empty()&&journalDirty)error="Installation continues. Keep NULL_store open while its progress record is being saved.";v=version;}pthread_mutex_unlock(&mutex);return changed;}
+void PackageInstaller::checkWorker() {
+    pthread_mutex_lock(&mutex);
+    checkWorkerPending = workerPackages && backend.checkWorker;
+    pthread_cond_signal(&changed);
+    pthread_mutex_unlock(&mutex);
+}
+WorkerInstallState PackageInstaller::workerInstallState() {
+    pthread_mutex_lock(&mutex);
+    const auto state = workerState;
+    pthread_mutex_unlock(&mutex);
+    return state;
+}
+bool PackageInstaller::canRemoveWorker(std::string& error) {
+    pthread_mutex_lock(&mutex);
+    bool busy = busyPath == workerPath(root);
+    for (const auto& pkg : requests) if (pkg.jobId == 0) busy = true;
+    for (const auto& pkg : tasks)
+        if (pkg.jobId == 0 && (pkg.state == InstallState::Registered || pkg.state == InstallState::Installing))
+            busy = true;
+    pthread_mutex_unlock(&mutex);
+    if (busy) error = "Wait for the worker installation to finish before removing it.";
+    return !busy;
+}
+
+void PackageInstaller::removeWorker() {
+    pthread_mutex_lock(&mutex);
+    removingWorker = true;
+    pthread_cond_signal(&changed);
+    pthread_mutex_unlock(&mutex);
+}
+
+bool PackageInstaller::takeWorkerRemoval(std::string& error) {
+    pthread_mutex_lock(&mutex);
+    const bool ready = removalReady;
+    if (ready) { error = removalError; removalReady = false; }
+    pthread_mutex_unlock(&mutex);
+    return ready;
+}
+
 void PackageInstaller::loop(){for(;;){pthread_mutex_lock(&mutex);if(quitting){pthread_mutex_unlock(&mutex);return;}
-    if(scanPending){int job=scanJob;std::string dir=scanDir;scanPending=false;pthread_mutex_unlock(&mutex);std::string error;auto found=scanPackages(root,job,dir,error);pthread_mutex_lock(&mutex);if(viewJob==job&&scanDir==dir){view=found;viewError=error;loading=false;updateViewLocked();}pthread_mutex_unlock(&mutex);continue;}
+    if (removingWorker) {
+        removingWorker = false;
+        pthread_mutex_unlock(&mutex);
+        std::string error;
+        workerInstallConfirmedThisSession = false;
+        bool ok = workerPackages && backend.removeWorker && backend.removeWorker(error);
+        pthread_mutex_lock(&mutex);
+        if (ok) {
+            workerState = WorkerInstallState::Missing;
+            unlink((root + "/worker-enabled.txt").c_str());
+            unlink(workerPath(root).c_str());
+            const auto previous = tasks.size();
+            tasks.erase(std::remove_if(tasks.begin(), tasks.end(), [](const InstallPackage& p) {
+                return p.jobId == 0 && p.contentId == workerContentId;
+            }), tasks.end());
+            if (tasks.size() != previous) saveLocked();
+            if (!viewJob) view.clear();
+            ++version;
+        }
+        removalError = ok ? "" : (error.empty() ? "Worker removal is unavailable." : error);
+        removalReady = true;
+        pthread_mutex_unlock(&mutex);
+        continue;
+    }
+    if (checkWorkerPending) {
+        checkWorkerPending = false;
+        pthread_mutex_unlock(&mutex);
+        const auto state = backend.checkWorker();
+        pthread_mutex_lock(&mutex);
+        workerState = state;
+        pthread_mutex_unlock(&mutex);
+        continue;
+    }
+    if(scanPending){int job=scanJob;std::string dir=scanDir;scanPending=false;pthread_mutex_unlock(&mutex);std::string error;auto found=workerPackages&&job==0&&dir.empty()?prepareWorker(root,error):scanPackages(root,job,dir,error);pthread_mutex_lock(&mutex);if(viewJob==job&&scanDir==dir){
+        // An explicit worker installation can be repeated after the user removes it in system settings.
+        if(job==0&&!found.empty()){
+            auto finished=std::remove_if(tasks.begin(),tasks.end(),[&](const InstallPackage& t){
+                return t.jobId==0&&t.path==workerPath(root)&&t.state==InstallState::Complete;
+            });
+            if(finished!=tasks.end()){tasks.erase(finished,tasks.end());saveLocked();}
+        }
+        view=found;viewError=error;loading=false;updateViewLocked();}pthread_mutex_unlock(&mutex);continue;}
     if(!requests.empty()){
         InstallPackage request=requests.front();requests.erase(requests.begin());std::string path=request.path;busyPath=path;int job=request.jobId;
         pthread_mutex_unlock(&mutex);
@@ -56,7 +169,16 @@ void PackageInstaller::loop(){for(;;){pthread_mutex_lock(&mutex);if(quitting){pt
             if(ok&&!alreadyComplete)ok=backend.resumeTask?backend.resumeTask(pkg.taskId,error):backend.startTask&&backend.startTask(pkg.taskId,error);
             installLog("Retry owned task: path=%s task=%d complete=%d ok=%d",path.c_str(),pkg.taskId,alreadyComplete,ok);
         }else{
-            ok=job>0&&inspectPackage(path,pkg,error);pkg.jobId=job;
+            ok=inspectPackage(path,pkg,error);
+            if(ok && job==0){
+                std::string staged;
+                ok=path==workerPath(root)&&pkg.contentId==workerContentId&&readQueueFile(path,staged)==1&&staged==readFile(workerSource);
+                if(!ok)error="Bundled worker verification failed. Reopen worker setup.";
+                pkg.name="NULL_store Download Worker";
+                pkg.verifiedWorkerInstall = ok;
+                if (ok) workerInstallConfirmedThisSession = false;
+            }else if(job<=0)ok=false;
+            pkg.jobId=job;
             if(ok)ok=backend.registerTask&&backend.registerTask(pkg,pkg.taskId,error)&&pkg.taskId>=0;
         }
         pthread_mutex_lock(&mutex);
@@ -69,6 +191,7 @@ void PackageInstaller::loop(){for(;;){pthread_mutex_lock(&mutex);if(quitting){pt
         if(ok&&!reused)ok=backend.startTask&&backend.startTask(pkg.taskId,error);
         pthread_mutex_lock(&mutex);
         if(ok){
+            if (alreadyComplete && pkg.verifiedWorkerInstall) workerInstallConfirmedThisSession = true;
             viewError.clear();for(auto&t:tasks)if(t.taskId==pkg.taskId){t.state=alreadyComplete?InstallState::Complete:InstallState::Installing;t.percent=alreadyComplete?100:std::max(-1,std::min(99,pkg.percent));t.note=alreadyComplete?"Installed":"Installing";}saveLocked();
         }else{
             viewError=error.empty()?"Could not install this package":error;
@@ -78,7 +201,7 @@ void PackageInstaller::loop(){for(;;){pthread_mutex_lock(&mutex);if(quitting){pt
         busyPath.clear();updateViewLocked();pthread_mutex_unlock(&mutex);continue;
     }
     // Only IDs created by Portal are polled; never adopt a task by content ID.
-    std::vector<InstallPackage>poll;for(auto&t:tasks)if(t.state==InstallState::Registered||t.state==InstallState::Installing||t.state==InstallState::Unavailable)poll.push_back(t);pthread_mutex_unlock(&mutex);
-    for(auto&t:poll){std::string error;bool ok=true;if(t.state==InstallState::Registered)ok=backend.resumeTask?backend.resumeTask(t.taskId,error):backend.startTask&&backend.startTask(t.taskId,error);int percent=t.percent;bool complete=false;if(ok)ok=backend.pollTask&&backend.pollTask(t.taskId,percent,complete,error);pthread_mutex_lock(&mutex);for(auto&owned:tasks)if(owned.taskId==t.taskId){InstallState state=!ok?InstallState::Unavailable:complete?InstallState::Complete:InstallState::Installing;int value=complete?100:std::max(-1,std::min(99,percent));std::string note=!ok?error:complete?"Installed":"Installing";bool changed=owned.state!=state||owned.percent!=value||owned.note!=note;owned.state=state;owned.percent=value;owned.note=note;if(changed){saveLocked();updateViewLocked();}break;}pthread_mutex_unlock(&mutex);}
-    pthread_mutex_lock(&mutex);if(journalDirty)saveLocked();if(!quitting&&!scanPending&&requests.empty()){struct timespec until;clock_gettime(CLOCK_REALTIME,&until);until.tv_sec+=1;pthread_cond_timedwait(&changed,&mutex,&until);}pthread_mutex_unlock(&mutex);
+    std::vector<InstallPackage>poll;for(auto&t:tasks)if((workerPackages||t.jobId>0)&&(t.state==InstallState::Registered||t.state==InstallState::Installing||t.state==InstallState::Unavailable))poll.push_back(t);pthread_mutex_unlock(&mutex);
+    for(auto&t:poll){std::string error;bool ok=true;if(t.state==InstallState::Registered)ok=backend.resumeTask?backend.resumeTask(t.taskId,error):backend.startTask&&backend.startTask(t.taskId,error);int percent=t.percent;bool complete=false;if(ok)ok=backend.pollTask&&backend.pollTask(t.taskId,percent,complete,error);pthread_mutex_lock(&mutex);for(auto&owned:tasks)if(owned.taskId==t.taskId){InstallState state=!ok?InstallState::Unavailable:complete?InstallState::Complete:InstallState::Installing;int value=complete?100:std::max(-1,std::min(99,percent));std::string note=!ok?error:complete?"Installed":"Installing";bool changed=owned.state!=state||owned.percent!=value||owned.note!=note;owned.state=state;owned.percent=value;owned.note=note;if(changed){if (complete && ok && owned.verifiedWorkerInstall) workerInstallConfirmedThisSession = true;saveLocked();updateViewLocked();}break;}pthread_mutex_unlock(&mutex);}
+    pthread_mutex_lock(&mutex);if(journalDirty)saveLocked();if(!quitting&&!scanPending&&!removingWorker&&!checkWorkerPending&&requests.empty()){struct timespec until;clock_gettime(CLOCK_REALTIME,&until);until.tv_sec+=1;pthread_cond_timedwait(&changed,&mutex,&until);}pthread_mutex_unlock(&mutex);
 }}

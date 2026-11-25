@@ -8,7 +8,7 @@ These ideas are planned improvements and are not yet available. Contributions an
 - [ ] Group duplicate listings for the same game into a single entry.
 - [ ] Let users choose between available download sources for a game.
 - [ ] Improve game pages with descriptions, screenshots and trailers.
-- [ ] Fix missing cover images for newly listed games.
+- [x] Fix missing cover images for newly listed games (orbispatches first, then the PlayStation Store API).
 
 ## Downloads
 

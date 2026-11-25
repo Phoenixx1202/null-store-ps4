@@ -1,6 +1,195 @@
-#include "../src/ui.h"
+#include "../src/ui/StoreState.h"
+#include "test_source_setup.h"
+using namespace ns;
 #include <cassert>
 #include <iostream>
-int main(){auto a=parseCards(readFile("tests/fixtures/page1.html"));auto b=parseCards(readFile("tests/fixtures/page2.html"));assert(a.size()>=12&&b.size()==12);assert(lastPage(readFile("tests/fixtures/page2.html"))==63);assert(sourceURL(a[0].url));assert(!sourceURL("https://ps4torrent.net.evil/a"));assert(!sourceURL("https://ps4torrent.net@evil/a"));assert(a[0].id>0);assert(decode("A &amp; B &#x41; &#1040;")=="A & B A А");assert(attr("<a data-href='bad' href='good'>","href")=="good");auto games=loadCatalog(readFile("assets/catalog.tsv"));assert(games.size()>700);auto round=loadCatalog(serialize(games));assert(round.size()==games.size());for(size_t i=0;i<games.size();++i)assert(games[i].title==round[i].title);for(auto&g:b){bool found=false;for(auto&x:games)if(g.id==x.id){assert(g.title==x.title);assert(g.year==x.year);assert(g.size==x.size);found=true;}assert(found);}assert(sizeMB("2,5 GB")==2560);assert(sizeMB("500 MB")==500);assert(loadCatalog("garbage\n").empty());
-    auto packed=packedBitmap("assets",games[0].id);auto loose=loadBitmap("assets/covers/"+std::to_string(games[0].id)+".jpg");assert(!packed.p.empty()&&packed.p==loose.p);UI ui("assets","build/test-data");assert(ui.visible.size()==games.size());ui.action(SELECT_SOURCE);assert(ui.sourceFilterPicker);ui.sourceChoice=2;ui.action(CONFIRM);assert(ui.sourceFilter==2&&!ui.visible.empty());for(int n:ui.visible)assert(sourceForURL(ui.games[n].url)==2);ui.action(SELECT_SOURCE);ui.sourceChoice=0;ui.action(CONFIRM);assert(ui.visible.size()==games.size());ui.action(PAGE_NEXT);assert(ui.selected==12);ui.action(PAGE_PREV);assert(ui.selected==0);ui.action(SEARCH);assert(ui.keyboard);ui.key=0;ui.action(CONFIRM);assert(ui.query=="A");ui.key=39;ui.action(CONFIRM);assert(!ui.keyboard);ui.action(BACK);assert(ui.query.empty());ui.action(CONFIRM);assert(ui.detail);ui.action(CONFIRM);assert(ui.sourcePicker&&ui.downloadRequest&&ui.downloadGame.id==ui.current()->id);ui.action(BACK);assert(!ui.sourcePicker&&ui.detail);ui.action(BACK);assert(!ui.detail);ui.action(DOWNLOADS);assert(ui.tab==3);ui.action(SERVICE);assert(ui.servicePicker);ui.action(CONFIRM);assert(ui.serviceStartRequest&&!ui.servicePicker);ui.action(SERVICE);ui.action(DOWN);ui.action(CONFIRM);assert(ui.serviceStopRequest&&!ui.servicePicker);ui.action(SEARCH);assert(!ui.installPicker);DownloadRow completed;completed.id=1;completed.state=DownloadState::Complete;ui.jobs.push_back(completed);ui.action(SEARCH);assert(ui.installPicker&&ui.installScanRequest&&ui.installJob==1);InstallPackage package;package.path="/generated/base.pkg";ui.packages.push_back(package);ui.installLoading=false;ui.action(CONFIRM);assert(ui.installSubmitRequest);ui.action(BACK);assert(!ui.installPicker);ui.action(BACK);assert(ui.tab==0);ui.action(TAB_NEXT);assert(ui.tab==1&&ui.visible.empty());ui.action(TAB_PREV);assert(ui.tab==0);ui.action(SORT);assert(ui.sort==1);ui.tab=3;ui.action(REMOVE_DOWNLOAD);assert(ui.removePicker&&ui.removeChoice==2);ui.action(UP);ui.action(CONFIRM);assert(ui.removeRequest&&ui.removeDeleteFiles&&ui.removeJob==1);ui.tab=0;ui.draw();assert(ui.c.pixels.size()==1920*1080);std::cout<<"Catalog parser, round trip, source restriction, search, navigation, sorting and rendering passed ("<<games.size()<<" games).\n";
+#include <sys/stat.h>
+int main(){
+    {
+        replaceSources(builtInSources());
+        char dir[] = "/tmp/null-store-catalog-XXXXXX";
+        assert(mkdtemp(dir));
+        auto bundled = loadCatalog(readFile("assets/catalog.tsv"));
+        assert(bundled.size() > 24);
+        std::vector<Game> first(bundled.begin(), bundled.begin() + 15);
+        assert(saveProviderCache(dir, sourceForURL(first.front().url), first));
+        StoreState offline("assets", dir);
+        assert(offline.games.size() == bundled.size());
+        int pairs = 0, triples = 0;
+        for (const auto& group : offline.groups) {
+            if (group.size() == 2) ++pairs;
+            if (group.size() == 3) ++triples;
+        }
+        assert(pairs && triples);
+        std::cout << bundled.size() << " offline listings, " << offline.groups.size() << " tiles, "
+                  << pairs << " two-listing tiles, " << triples << " three-listing tiles.\n";
+        offline.action(PAGE_NEXT);
+        assert(offline.selected == StoreState::kGridPage);
+        offline.selected = int(offline.visible.size()) - 1;
+        offline.action(PAGE_NEXT);
+        assert(offline.selected == int(offline.visible.size()) - 1);
+        const auto cache = providerCachePath(dir, sourceForURL(first.front().url));
+        unlink((cache + ".time").c_str());
+        unlink(cache.c_str());
+        rmdir(dir);
+    }
+    replaceSources({});
+    registerTestSource("one", "https://one.example.org");
+    registerTestSource("two", "https://two.example.org");
+    std::vector<Game> games;
+    for (int i = 1; i <= 2 * StoreState::kGridPage + 4; ++i) {
+        Game game;
+        game.title = "Game " + std::to_string(i / 2);
+        game.url = sourceOrigin(1 + i % 2) + "/" + std::to_string(i);
+        game.id = stableGameId(game.url);
+        games.push_back(game);
+    }
+    {Game g;g.title="[PS4] Dying Light: Definitive Edition (CUSA02010) [1.54]";auto t=describe(g);assert(t.title=="Dying Light: Definitive Edition"&&t.titleId=="CUSA02010"&&t.version=="1.54");g.title="Assassin\xE2\x80\x99s Creed Mirage [1.11] [Repack] (\xD1\x80\xD1\x83\xD1\x81\xD1\x81\xD0\xBA\xD0\xB0\xD1\x8F)";t=describe(g);assert(t.title=="Assassin\xE2\x80\x99s Creed Mirage"&&t.version=="1.11");g.title="Bubsy 4D";assert(describe(g).title=="Bubsy 4D");assert(cleanName("Romancing SaGa 2: Revenge of the Seven - PS4&PS5")=="Romancing SaGa 2: Revenge of the Seven");g.title="Red Dead Redemption (\xD0\x9F\xD0\x9A) ( )";assert(describe(g).title=="Red Dead Redemption");assert(withoutEmptyBrackets("A ( ) B []")=="A B");assert(cleanName("Assassin's Creed\xC2\xAE Mirage")=="Assassin's Creed Mirage");}
+    mkdir("build",0777);mkdir("build/test-data",0777); // settings and favorites are written here
+    remove("build/test-data/settings.txt");remove("build/test-data/settings.txt.tmp");remove("build/test-data/debrid-keys.txt");
+    assert(writeFile("build/test-data/catalog.tsv", serialize(games)));
+    StoreState ui("assets","build/test-data");auto all=[&](StoreState&u){size_t n=0;assert(u.visible.size()==u.groups.size());for(size_t g=0;g<u.groups.size();++g){assert(!u.groups[g].empty()&&u.visible[g]==u.groups[g][0]);n+=u.groups[g].size();}return n;};assert(all(ui)==games.size()&&ui.groups.size()<games.size());
+    // Entries of one game share a tile, newest version first; the game page chooses one of them.
+    assert(StoreState::newerVersion("1.10","1.9")&&!StoreState::newerVersion("1.9","1.10")&&StoreState::newerVersion("1.0","")&&!StoreState::newerVersion("","1.0"));
+    {
+        StoreState g("assets", "build/test-data");
+        g.games = {
+            {1, "Dying Light (CUSA02010) [1.20]", "", "", "https://one.example.org/a", ""},
+            {2, "Dying Light [1.54]", "", "", "https://two.example.org/a", ""},
+            {3, "Bubsy 4D", "", "", "https://one.example.org/b", ""},
+        };
+        assert(g.shareTitleIds());
+        g.selected = 0;
+        g.filter();
+        assert(g.groups.size() == 2 && g.groups[0].size() == 2 && g.games[g.visible[0]].id == 2);
+        g.action(CONFIRM);
+        assert(g.detail && g.variantSelected == 0 && !g.canDownloadVersion());
+        g.action(CONFIRM);
+        g.action(DOWN);
+        g.action(CONFIRM);
+        assert(g.variantSelected == 1 && g.variant()->id == 1 && g.canDownloadVersion() && !g.downloadRequest);
+        g.action(CONFIRM);
+        assert(g.downloadGame.id == 1 && g.downloadRequest);
+        g.sourcePicker = false;
+        g.action(BACK);
+        g.favorites.clear();
+        g.action(FAVORITE);
+        assert(g.favorites.count(2));
+        g.favorites.clear();
+        g.favorites.insert(1);
+        g.action(FAVORITE);
+        assert(g.favorites.empty());
+    }
+    {
+        StoreState queue("assets", "build/test-data");
+        queue.games = {{1, "Wrong listing", "", "", "https://one.example.org/game", ""},
+                       {2, "[PS4] Game / Episode (CUSA02010) [1.54]", "", "", "https://two.example.org/game", ""}};
+        DownloadRow job;
+        job.gameId = 1;
+        job.page = queue.games.back().url;
+        job.title = "Old title / torrent label";
+        auto text = describe(queue.downloadListing(job));
+        assert(text.title == "Game / Episode" && text.titleId == "CUSA02010");
+        job.page.clear();
+        job.gameId = 2;
+        assert(describe(queue.downloadListing(job)).title == "Game / Episode");
+        job.page = "https://two.example.org/removed";
+        job.title = "[PS4] Saved title (CUSA12345) [1.08] / Saved title.torrent";
+        text = describe(queue.downloadListing(job));
+        assert(text.title == "Saved title" && text.titleId == "CUSA12345");
+        job.title = "Big Buck Bunny connection test";
+        assert(describe(queue.downloadListing(job)).title == job.title);
+    }
+    {
+        StoreState ambiguous("assets","build/test-data");
+        ambiguous.games = {
+            {100, "Remake (CUSA12345)", "2010", "", "", ""},
+            {101, "Remake (CUSA67890)", "2025", "", "", ""},
+            {102, "Remake", "", "", "", ""}
+        };
+        ambiguous.shareTitleIds();
+        ambiguous.filter();
+        assert(ambiguous.groups.size()==3 && !ambiguous.displayTitleIds.count(102));
+    }
+    // OPTIONS opens Settings; a source chosen there filters the catalogue and is kept.
+    ui.action(SETTINGS);assert(ui.settings);ui.action(CONFIRM);assert(ui.sourceFilterPicker);ui.sourceChoice=2;ui.action(CONFIRM);assert(ui.sourceFilter==2&&!ui.sourceFilterPicker&&ui.settings&&!ui.visible.empty());for(auto&group:ui.groups)for(int n:group)assert(sourceForURL(ui.games[n].url)==2);
+    {StoreState again("assets","build/test-data");assert(again.sourceFilter==2);}
+    ui.action(CONFIRM);ui.sourceChoice=0;ui.action(CONFIRM);assert(all(ui)==games.size());
+    ui.action(DOWN);ui.action(CONFIRM);assert(ui.sortPicker);ui.action(DOWN);ui.action(CONFIRM);assert(ui.sort==1&&!ui.sortPicker);ui.action(CONFIRM);ui.action(UP);ui.action(CONFIRM);assert(ui.sort==0);
+    ui.settingsSelected=SETTING_LOCATION;ui.action(CONFIRM);assert(ui.downloadLocationPicker);ui.action(BACK);assert(!ui.downloadLocationPicker&&ui.settings);
+    // Debrid: a service, then its key (asked for at once), both kept between runs.
+    ui.settingsSelected=SETTING_DEBRID_KEY;ui.action(CONFIRM);assert(ui.debridPicker&&ui.debridChoice==1);ui.action(BACK);ui.settingsSelected=SETTING_DEBRID;ui.action(CONFIRM);assert(ui.debridPicker);ui.action(DOWN);ui.action(CONFIRM);assert(ui.debrid==1&&!ui.debridPicker&&ui.debridKeyRequest&&ui.settingsSelected==SETTING_DEBRID_KEY);ui.debridKeyRequest=false;
+    ui.setDebridKey("  ABC123xyz \n");assert(ui.debridKey()=="ABC123xyz");{StoreState again("assets","build/test-data");assert(again.debrid==1&&again.debridKey()=="ABC123xyz");}
+    ui.setDebridKey("");assert(ui.debridKey().empty());ui.settingsSelected=SETTING_DEBRID;ui.action(CONFIRM);ui.action(UP);ui.action(CONFIRM);assert(ui.debrid==0&&!ui.debridKeyRequest);
+    ui.settingsSelected=SETTING_ARTWORK;ui.action(CONFIRM);assert(!ui.officialArt&&ui.artworkChanged);ui.artworkChanged=false;ui.action(CONFIRM);assert(ui.officialArt);
+    ui.settingsSelected=SETTING_REFRESH;ui.action(CONFIRM);assert(ui.refreshRequest);ui.refreshRequest=false;ui.action(BACK);assert(!ui.settings);
+    // Catalogue grid, search and the game page.
+    ui.action(PAGE_NEXT);assert(ui.selected==StoreState::kGridPage);ui.action(PAGE_PREV);assert(ui.selected==0);ui.action(SEARCH);assert(ui.keyboard);ui.key=0;ui.action(CONFIRM);assert(ui.searchDraft=="A"&&ui.query.empty());ui.key=39;ui.action(CONFIRM);assert(!ui.keyboard);ui.action(BACK);assert(ui.query.empty());
+    ui.action(CONFIRM);assert(ui.detail);ui.action(SETTINGS);assert(!ui.settings);
+    if (!ui.canDownloadVersion()) { ui.action(CONFIRM);ui.action(CONFIRM); }
+    ui.action(CONFIRM);assert(ui.sourcePicker&&ui.downloadRequest&&ui.downloadGame.id==ui.variant()->id);ui.action(BACK);assert(!ui.sourcePicker&&ui.detail);ui.action(BACK);assert(!ui.detail);
+    ui.downloadRequest=false;
+    ui.action(CONFIRM);assert(ui.detail);
+    auto& versions = ui.groups[ui.selected];
+    if (versions.size() < 2) versions.push_back((versions.front() + 1) % ui.games.size());
+    ui.detailFocus = DetailFocus::Version;
+    ui.action(DOWN);assert(ui.detailFocus==DetailFocus::Version&&!ui.canDownloadVersion());
+    ui.action(CONFIRM);assert(ui.versionPicker);
+    const int defaultVersion=ui.variantSelected;
+    ui.action(DOWN);assert(ui.variantSelected==defaultVersion&&!ui.downloadRequest);
+    ui.action(CONFIRM);assert(!ui.versionPicker&&ui.variantSelected==1&&ui.detailFocus==DetailFocus::Download&&!ui.downloadRequest);
+    ui.setGameMedia(ui.current()->id, 3, "https://vulcan.dl.playstation.net/example.mp4");
+    ui.action(DOWN);assert(ui.detailFocus==DetailFocus::Media);
+    ui.action(RIGHT);ui.action(CONFIRM);assert(ui.screenshotOpen&&ui.mediaSelected==1);
+    ui.action(RIGHT);assert(ui.screenshotOpen&&ui.mediaSelected==2);
+    ui.action(RIGHT);assert(ui.mediaSelected==2);ui.action(BACK);assert(!ui.screenshotOpen);
+    ui.action(MANAGE);assert(ui.trailerOpen&&ui.dialogOpen());ui.action(BACK);assert(!ui.trailerOpen&&ui.detail);
+    ui.setGameMedia(ui.current()->id, 3, "");
+    ui.action(MANAGE);
+    assert(!ui.trailerOpen && ui.trailerCode.size == 0 && ui.mediaCount() == 3);
+    ui.action(UP);assert(ui.detailFocus==DetailFocus::Download);
+    DownloadRow other;other.id=80;other.gameId=ui.variant()->id;other.page="https://example.com/other-version";
+    DownloadRow queued;queued.id=81;queued.page=ui.variant()->url;
+    ui.jobs={other,queued};
+    ui.action(CONFIRM);assert(ui.tab==TAB_DOWNLOADS&&!ui.detail&&!ui.sourcePicker&&ui.selectedJob()==81);
+    ui.jobs.clear();ui.action(BACK);
+    // Download queue: Settings stays closed, only finished downloads install, Square cancels and deletes.
+    ui.action(TAB_PREV);assert(ui.tab==TAB_DOWNLOADS);ui.action(SETTINGS);assert(!ui.settings);ui.action(SEARCH);assert(!ui.installPicker);
+    ui.updateWorkerOptions(WorkerInstallState::Missing, false);
+    ui.action(MANAGE);assert(ui.workerActions.front()==WorkerAction::Install);
+    ui.action(CONFIRM);assert(ui.installPicker&&ui.installScanRequest&&!ui.startWorker);ui.action(BACK);
+    ui.installScanRequest=false;
+    ui.updateWorkerOptions(WorkerInstallState::Unknown, false);
+    assert(ui.workerActions==std::vector<WorkerAction>{WorkerAction::Test});
+    ui.updateWorkerOptions(WorkerInstallState::Current, true);
+    ui.action(MANAGE);assert(ui.workerActions.front()==WorkerAction::Stop);
+    ui.action(CONFIRM);assert(ui.stopWorker&&!ui.workerMenu);ui.stopWorker=false;
+    ui.updateWorkerOptions(WorkerInstallState::Current, false);
+    ui.action(MANAGE);assert(ui.workerActions.front()==WorkerAction::Start);
+    ui.action(DOWN);ui.action(CONFIRM);
+    assert(ui.confirmWorkerRemoval&&ui.confirmedWorkerAction==WorkerAction::Reinstall);
+    ui.action(DOWN);ui.action(CONFIRM);
+    assert(ui.uninstallWorker&&ui.reinstallWorker);ui.uninstallWorker=ui.reinstallWorker=false;
+    ui.action(MANAGE);ui.action(DOWN);ui.action(DOWN);ui.action(CONFIRM);
+    assert(ui.confirmWorkerRemoval&&!ui.uninstallWorker&&ui.menuChoice==0);
+    ui.action(CONFIRM);assert(ui.workerMenu&&!ui.uninstallWorker);
+    ui.action(CONFIRM);ui.action(DOWN);ui.action(CONFIRM);
+    assert(ui.uninstallWorker&&!ui.reinstallWorker&&!ui.confirmWorkerRemoval);ui.uninstallWorker=false;
+    ui.updateWorkerOptions(WorkerInstallState::Different, false);
+    ui.action(MANAGE);assert(ui.workerActions.front()==WorkerAction::Replace);ui.action(BACK);
+    ui.updateWorkerOptions(WorkerInstallState::Installed, false);
+    assert(std::find(ui.workerActions.begin(), ui.workerActions.end(), WorkerAction::Start)==ui.workerActions.end());
+    ui.workerStarting=true;
+    ui.action(TAB_NEXT);ui.action(MANAGE);ui.action(CONFIRM);
+    assert(ui.tab==TAB_DOWNLOADS&&!ui.workerMenu&&!ui.startWorker);
+    ui.workerStarting=false;
+    DownloadRow running;running.id=2;running.state=DownloadState::Active;ui.jobs.push_back(running);ui.action(SEARCH);assert(!ui.installPicker);ui.jobs.clear();
+    DownloadRow completed;completed.id=1;completed.state=DownloadState::Complete;ui.jobs.push_back(completed);ui.action(SEARCH);assert(ui.installPicker&&ui.installScanRequest&&ui.installJob==1);InstallPackage package;package.path="/generated/base.pkg";ui.packages.push_back(package);ui.installLoading=false;ui.action(CONFIRM);assert(ui.installSubmitRequest);ui.action(BACK);assert(!ui.installPicker);
+    ui.action(FAVORITE);ui.menuChoice=1;ui.action(CONFIRM);assert(ui.cancelRequest&&ui.cancelJob==1&&ui.jobs.empty()&&ui.deletingJobs.count(1));ui.cancelRequest=false;
+    ui.jobs.push_back(completed);ui.hideDeletedJobs();assert(ui.jobs.empty());
+    DownloadRow failed=completed;failed.state=DownloadState::Failed;failed.error="Could not delete downloaded files: busy";ui.jobs.push_back(failed);ui.hideDeletedJobs();assert(ui.jobs.size()==1);
+    ui.jobs.clear();ui.hideDeletedJobs();assert(ui.deletingJobs.empty());
+    ui.action(BACK);assert(ui.tab==TAB_ALL);ui.action(TAB_NEXT);assert(ui.tab==TAB_FAVORITES&&ui.visible.empty());ui.action(TAB_PREV);assert(ui.tab==TAB_ALL);ui.action(SORT);assert(ui.sort==1);for(int i=0;i<3;++i)ui.action(SORT);assert(ui.sort==0);
+    remove("build/test-data/settings.txt");remove("build/test-data/settings.txt.tmp");remove("build/test-data/debrid-keys.txt");
+    std::cout<<"Catalog parser, round trip, source restriction, settings, search, navigation, sorting and the download queue passed ("<<games.size()<<" games).\n";
 }

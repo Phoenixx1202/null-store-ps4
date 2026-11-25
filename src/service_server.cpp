@@ -1,7 +1,14 @@
+#ifdef PORTAL_HOST
+#define NULLSTORE_SERVICE_BUILD "host-test"
+#else
+#include "../build/service_build_id.h"
+#endif
 #include "service_server.h"
+#include "download_paths.h"
 #include "net_compat.h"
 #include "service_protocol.h"
 #include "service_log.h"
+#include "sources.h"
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
@@ -24,10 +31,15 @@ int runPortalService(const std::string&root,DownloadFetch fetch,int port){
     errno=0;int made=mkdir(root.c_str(),0777);int mkdirError=errno;
     SERVICE_LOG("server: mkdir root=%s => %d errno=%d",root.c_str(),made,mkdirError);
 
-    errno=0;int ownership=open((root+"/queue-owner.lock").c_str(),O_RDWR|O_CREAT,0666);int openError=errno;
+    errno=0;int ownership=open((root+"/queue-owner.lock").c_str(),O_RDWR|O_CREAT|O_NOFOLLOW|O_NONBLOCK,0666);int openError=errno;
     SERVICE_LOG("server: open queue lock => fd=%d errno=%d",ownership,openError);
     if(ownership<0)return 2;
-    errno=0;int shareResult=fchmod(ownership,0666);int shareError=errno;
+    struct stat mode={};
+    errno=0;
+    int shareResult=portalDescriptorInfo(ownership,&mode);
+    if(!shareResult&&!S_ISREG(mode.st_mode)){shareResult=-1;errno=EINVAL;}
+    if(!shareResult&&(mode.st_mode&0777)!=0666)shareResult=fchmod(ownership,0666);
+    int shareError=errno;
     SERVICE_LOG("server: share queue lock => %d errno=%d",shareResult,shareError);
     if(shareResult){close(ownership);return 2;}
     errno=0;int lockResult=flock(ownership,LOCK_EX|LOCK_NB);int lockError=errno;
@@ -50,6 +62,8 @@ int runPortalService(const std::string&root,DownloadFetch fetch,int port){
     signal(SIGTERM,quitService);signal(SIGINT,quitService);signal(SIGPIPE,SIG_IGN);serviceQuit=0;
     int result=0;{
         SERVICE_LOG("server: constructing download manager");
+        std::string sourcesError;
+        if(!loadSourcesIntoTable(root+"/sources.json",sourcesError))SERVICE_LOG("sources.json rejected: %s",sourcesError.c_str());
         DownloadManager manager(root,fetch);
         SERVICE_LOG("server: download manager constructed");
         errno=0;bool started=manager.start();int startError=errno;
@@ -57,9 +71,9 @@ int runPortalService(const std::string&root,DownloadFetch fetch,int port){
         if(!started){SERVICE_LOG("server: saved queue unavailable: %s",manager.startupError().c_str());close(server);flock(ownership,LOCK_UN);close(ownership);return 4;}
         std::vector<TorrentLink>sourceLinks;std::string sourceError,sourceTitle;bool sourceReady=false;Game sourceGame;
 #ifdef PORTAL_HOST
-        printf("NULL_store service 1.0 listening on 127.0.0.1:%d (pid %d)\n",port,getpid());fflush(stdout);
+        printf("NULL_store service 1.1 listening on 127.0.0.1:%d (pid %d)\n",port,getpid());fflush(stdout);
 #else
-        SERVICE_LOG("server: listening on 127.0.0.1:%d pid=%d",port,getpid());
+        SERVICE_LOG("server: listening on 127.0.0.1:%d pid=%d build=%s",port,getpid(),NULLSTORE_SERVICE_BUILD);
 #endif
         time_t lastHeartbeat=time(0);
         while(!serviceQuit){
@@ -74,12 +88,18 @@ int runPortalService(const std::string&root,DownloadFetch fetch,int port){
             if(receiveFrame(fd,packet)){
                 try{
                     Reader r(packet);unsigned cmd=r.u32();Writer data;
+                    if (cmd == DISCOVER || cmd == ENQUEUE || cmd == ENQUEUE_FOLDER) {
+                        std::string why;
+                        if (!loadSourcesIntoTable(root + "/sources.json", why))
+                            SERVICE_LOG("Using current sources: %s", why.c_str());
+                    }
                     switch(cmd){
-                        case PING:r.end();data.u32(VERSION);data.string("1.0");data.u32(getpid());break;
+                        case PING:r.end();data.u32(VERSION);data.string("1.1");data.u32(getpid());break;
+                        case BUILD_ID:r.end();data.u32(VERSION);data.string(NULLSTORE_SERVICE_BUILD);break;
                         case QUEUE:{r.end();uint64_t stamp=0;std::vector<DownloadRow>jobs;manager.snapshot(stamp,jobs);data.u32(jobs.size());for(auto&j:jobs)row(data,j);break;}
                         case DISCOVER:{sourceGame=game(r);r.end();sourceLinks.clear();sourceError.clear();sourceReady=false;SERVICE_LOG("server: game-page lookup started game=%d source=%d",sourceGame.id,sourceForURL(sourceGame.url));manager.discover(sourceGame);break;}
                         case SOURCES:{int id=r.u32();r.end();if(id!=sourceGame.id){SERVICE_LOG("server: ignored stale SOURCES request game=%d current=%d",id,sourceGame.id);data.u32(0);break;}if(!sourceReady)sourceReady=manager.takeSources(sourceLinks,sourceTitle,sourceError);data.u32(sourceReady?1:0);if(sourceReady){SERVICE_LOG("server: game-page lookup finished game=%d links=%zu result=%s",id,sourceLinks.size(),sourceError.empty()?"ok":sourceError.c_str());data.string(sourceError);data.u32(sourceLinks.size());for(auto&link:sourceLinks){data.string(link.title);data.string(link.url);}}break;}
-                        case ENQUEUE:{Game g=game(r);TorrentLink link;link.title=r.string();link.url=r.string();auto metadata=r.string();r.end();SERVICE_LOG("server: enqueue game=%d cached_torrent_bytes=%zu",g.id,metadata.size());std::string why;if(!manager.enqueue(g,link,why,metadata))throw std::runtime_error(why);data.string(why);break;}
+                        case ENQUEUE:case ENQUEUE_FOLDER:{Game g=game(r);TorrentLink link;link.title=r.string();link.url=r.string();auto metadata=r.string();auto destination=cmd==ENQUEUE_FOLDER?r.string():std::string();r.end();if(cmd==ENQUEUE_FOLDER&&!validDownloadBase(root,destination))throw std::runtime_error("Invalid download folder");SERVICE_LOG("server: enqueue game=%d cached_torrent_bytes=%zu",g.id,metadata.size());std::string why;if(!manager.enqueue(g,link,why,metadata,destination))throw std::runtime_error(why);data.string(why);break;}
                         case PAUSE:case RESUME:case CANCEL:case REMOVE:case REMOVE_DELETE:{int id=r.u32();r.end();uint64_t stamp=0;std::vector<DownloadRow>jobs;manager.snapshot(stamp,jobs);bool exists=false;for(auto&j:jobs)if(j.id==id)exists=true;if(!exists)throw std::runtime_error("Download no longer exists");if(cmd==REMOVE||cmd==REMOVE_DELETE)manager.remove(id,cmd==REMOVE_DELETE);else if(cmd==CANCEL)manager.cancel(id);else manager.setPaused(id,cmd==PAUSE);break;}
                         case STOP:r.end();SERVICE_LOG("server: STOP command received");serviceQuit=1;break;
                         default:throw std::runtime_error("Unsupported service command");

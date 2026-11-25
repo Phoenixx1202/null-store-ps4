@@ -16,3 +16,6 @@
 __pycache__/
 *.py[cod]
 .DS_Store
+
+/assets/service/build-id.txt
+/assets/worker/

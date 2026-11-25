@@ -2,8 +2,11 @@
 #include "queue_store.h"
 #include "download_paths.h"
 #include "path_info.h"
+#include "debrid.h"
 #ifndef PORTAL_HOST
 #include "network_ps4.h"
+#include "network_bypass.h"
+#include <time.h>
 #endif
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -11,10 +14,23 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+// The network a Debrid transfer uses: the console's sockets (none on the host).
+static const DebridNet* debridNetwork(){
+#ifndef PORTAL_HOST
+    static const DebridNet net=[]{DebridNet n;
+        n.request=[](const std::string&method,const std::string&url,const std::vector<std::string>&headers,const std::string&body,std::string&out,int&status){PortalRequest r;r.method=method;r.headers=headers;r.body=body;return portalSocketRequest(url,r,out,4*1024*1024,status);};
+        n.download=[](const std::string&url,uint64_t offset,uint64_t end,const std::function<bool(uint64_t,uint64_t)>&begin,const std::function<bool(const unsigned char*,size_t)>&write,const std::function<bool()>&stopped,std::string&why){PortalStream s;s.offset=offset;s.end=end;s.begin=begin;s.write=write;s.stopped=stopped;return portalSocketDownload(url,s,why);};
+        n.sleep=[](int ms){struct timespec t={ms/1000,(long)(ms%1000)*1000000L};nanosleep(&t,0);};
+        return n;}();
+    return &net;
+#else
+    return nullptr;
+#endif
+}
 static double secondsNow(){struct timeval tv;gettimeofday(&tv,0);return tv.tv_sec+tv.tv_usec/1000000.;}
 static std::string field(std::string s){for(char&c:s)if(c=='\t'||c=='\r'||c=='\n')c=' ';return s;}
 static bool removeTree(const std::string&path){struct stat st;if(portalPathInfo(path.c_str(),&st)){if(errno==ENOENT)return true;if(errno==ELOOP)return unlink(path.c_str())==0;return false;}if(S_ISDIR(st.st_mode)){DIR*d=opendir(path.c_str());if(!d)return false;bool ok=true;int failure=0;for(dirent*e=readdir(d);e;e=readdir(d)){if(!strcmp(e->d_name,".")||!strcmp(e->d_name,".."))continue;if(!removeTree(path+"/"+e->d_name)){ok=false;failure=errno;break;}}closedir(d);if(!ok){errno=failure?failure:EIO;return false;}return rmdir(path.c_str())==0;}return unlink(path.c_str())==0;}
-static bool removeDownloadFiles(const std::string&root,int id,const std::string&downloadDir){if(!validDownloadDir(root,id,downloadDir)){errno=EINVAL;return false;}std::string meta=root+"/torrents/"+std::to_string(id)+".torrent";if(!removeTree(downloadDir))return false;const char*suffixes[]={".resume.tmp",".resume",""};for(const char*suffix:suffixes)if(unlink((meta+suffix).c_str())&&errno!=ENOENT)return false;return true;}
+static bool removeDownloadFiles(const std::string&root,int id,const std::string&downloadDir){if(!validDownloadDir(root,id,downloadDir)){errno=EINVAL;return false;}std::string meta=root+"/torrents/"+std::to_string(id)+".torrent";if(!downloadDirectoryChain(downloadDir.substr(0,downloadDir.rfind('/')),true))return false;if(!removeTree(downloadDir))return false;const char*suffixes[]={".resume.tmp",".resume",".debrid",".debrid.tmp",""};for(const char*suffix:suffixes)if(unlink((meta+suffix).c_str())&&errno!=ENOENT)return false;return true;}
 DownloadManager::DownloadManager(std::string p,DownloadFetch f):root(p),fetch(f){pthread_mutex_init(&mutex,0);pthread_cond_init(&changed,0);mkdir(root.c_str(),0777);mkdir((root+"/torrents").c_str(),0777);mkdir((root+"/downloads").c_str(),0777);
     int permissionError=repairSharedDownloadQueue(root);
     bool recovered=false;auto s=loadQueue(root+"/downloads.tsv",&recovered,&loadError);
@@ -23,7 +39,7 @@ DownloadManager::DownloadManager(std::string p,DownloadFetch f):root(p),fetch(f)
 #else
     (void)permissionError;
 #endif
-    size_t p0=0;while(p0<s.size()&&jobs.size()<512){auto end=s.find('\n',p0);if(end==std::string::npos)end=s.size();auto line=s.substr(p0,end-p0);p0=end+1;std::vector<std::string>v;size_t k=0;for(;;){auto e=line.find('\t',k);v.push_back(line.substr(k,e-k));if(e==std::string::npos)break;k=e+1;}if(v.size()<8||v.size()>13)continue;DownloadRow j;j.id=atoi(v[0].c_str());j.gameId=atoi(v[1].c_str());j.title=v[2];j.url=v[3];int state=atoi(v[4].c_str());if(j.id<=0||j.id>1000000||j.gameId<=0||(!sourceURL(j.url)&&!isDiagnosticTorrent(j.url))||state<0||state>6)continue;bool duplicate=false;for(auto&other:jobs)if(other.id==j.id)duplicate=true;if(duplicate)continue;j.state=state==int(DownloadState::Active)||state==int(DownloadState::Queued)?DownloadState::Queued:state==int(DownloadState::Pausing)?DownloadState::Paused:DownloadState(state);j.done=strtoull(v[5].c_str(),0,10);j.total=strtoull(v[6].c_str(),0,10);if(j.done>j.total)j.done=0;j.error=v[7];j.page=v.size()>=9&&sourceURL(v[8])?v[8]:"https://ps4torrent.net/";j.infoHash=v.size()>=10?v[9]:"";j.removed=v.size()>=11&&v[10]=="1";j.deleteFiles=v.size()>=12&&v[11]=="1";j.outputDir=v.size()>=13&&validDownloadDir(root,j.id,v[12])?v[12]:defaultDownloadDir(root,j.id);if(j.deleteFiles){j.state=DownloadState::Cancelled;j.phase="Delete pending; waiting for worker";}else if(j.removed&&j.state!=DownloadState::Complete)j.state=DownloadState::Cancelled;if(j.phase.empty())j.phase=j.state==DownloadState::Queued?"Resuming saved download; checking existing pieces":j.state==DownloadState::Paused?"Paused by you. Press X to resume.":stateName(j.state);if(recovered)j.error="Recovered saved queue from backup";jobs.push_back(j);nextId=std::max(nextId,j.id+1);}
+    size_t p0=0;while(p0<s.size()&&jobs.size()<512){auto end=s.find('\n',p0);if(end==std::string::npos)end=s.size();auto line=s.substr(p0,end-p0);p0=end+1;std::vector<std::string>v;size_t k=0;for(;;){auto e=line.find('\t',k);v.push_back(line.substr(k,e-k));if(e==std::string::npos)break;k=e+1;}if(v.size()<8||v.size()>13)continue;DownloadRow j;j.id=atoi(v[0].c_str());j.gameId=atoi(v[1].c_str());j.title=v[2];j.url=v[3];int state=atoi(v[4].c_str());if(j.id<=0||j.id>1000000||j.gameId<=0||(j.url.compare(0,8,"https://")!=0 || urlHost(j.url).empty() || j.url.find_first_of("\r\n\t ") != std::string::npos)||state<0||state>6)continue;bool duplicate=false;for(auto&other:jobs)if(other.id==j.id)duplicate=true;if(duplicate)continue;j.state=state==int(DownloadState::Active)||state==int(DownloadState::Queued)?DownloadState::Queued:state==int(DownloadState::Pausing)?DownloadState::Paused:DownloadState(state);j.done=strtoull(v[5].c_str(),0,10);j.total=strtoull(v[6].c_str(),0,10);if(j.done>j.total)j.done=0;j.error=v[7];j.page=v.size()>=9&&sourceURL(v[8])?v[8]:"";j.infoHash=v.size()>=10?v[9]:"";j.removed=v.size()>=11&&v[10]=="1";j.deleteFiles=v.size()>=12&&v[11]=="1";auto savedDir=v.size()>=13?migratedDownloadPath(root,v[12]):std::string();j.outputDir=validDownloadDir(root,j.id,savedDir)?savedDir:defaultDownloadDir(root,j.id);if(j.deleteFiles){j.state=DownloadState::Cancelled;j.phase="Delete pending; waiting for worker";}else if(j.removed&&j.state!=DownloadState::Complete)j.state=DownloadState::Cancelled;if(j.phase.empty())j.phase=j.state==DownloadState::Queued?"Resuming saved download; checking existing pieces":j.state==DownloadState::Paused?"Paused by you. Press X to resume.":stateName(j.state);if(recovered)j.error="Recovered saved queue from backup";jobs.push_back(j);nextId=std::max(nextId,j.id+1);}
 }
 DownloadManager::~DownloadManager(){pthread_mutex_lock(&mutex);quitting=true;pthread_cond_broadcast(&changed);pthread_mutex_unlock(&mutex);if(started){for(int i=0;i<workerCount;i++)pthread_join(workers[i],0);pthread_join(sourceWorker,0);}if(saveStarted){pthread_mutex_lock(&mutex);saveStopping=true;pthread_cond_broadcast(&changed);pthread_mutex_unlock(&mutex);pthread_join(saveWorker,0);}pthread_cond_destroy(&changed);pthread_mutex_destroy(&mutex);}
 bool DownloadManager::start(){if(!loadError.empty())return false;if(started)return true;quitting=false;saveStopping=false;if(pthread_create(&saveWorker,0,saveEntry,this))return false;saveStarted=true;for(int i=0;i<MAX_PARALLEL_DOWNLOADS;i++){workerContexts[i].manager=this;workerContexts[i].jobId=0;workerContexts[i].deleteJobId=0;if(pthread_create(&workers[i],0,entry,&workerContexts[i]))break;workerCount++;}if(workerCount!=MAX_PARALLEL_DOWNLOADS){pthread_mutex_lock(&mutex);quitting=true;pthread_cond_broadcast(&changed);pthread_mutex_unlock(&mutex);for(int i=0;i<workerCount;i++)pthread_join(workers[i],0);workerCount=0;quitting=false;pthread_mutex_lock(&mutex);saveStopping=true;pthread_cond_broadcast(&changed);pthread_mutex_unlock(&mutex);pthread_join(saveWorker,0);saveStarted=false;saveStopping=false;return false;}if(pthread_create(&sourceWorker,0,sourceEntry,this)){pthread_mutex_lock(&mutex);quitting=true;pthread_cond_broadcast(&changed);pthread_mutex_unlock(&mutex);for(int i=0;i<workerCount;i++)pthread_join(workers[i],0);workerCount=0;quitting=false;pthread_mutex_lock(&mutex);saveStopping=true;pthread_cond_broadcast(&changed);pthread_mutex_unlock(&mutex);pthread_join(saveWorker,0);saveStarted=false;saveStopping=false;return false;}started=true;return true;}
@@ -35,22 +51,89 @@ void DownloadManager::saveLoop(){for(;;){pthread_mutex_lock(&mutex);while(!saveD
 void DownloadManager::discover(const Game&g){pthread_mutex_lock(&mutex);sourceGame=g;discovery=true;sourceReady=false;links.clear();sourceError.clear();pthread_cond_broadcast(&changed);pthread_mutex_unlock(&mutex);}
 bool DownloadManager::takeSources(std::vector<TorrentLink>&v,std::string&title,std::string&error){pthread_mutex_lock(&mutex);bool result=sourceReady;if(result){v=links;title=sourceGame.title;error=sourceError;sourceReady=false;}pthread_mutex_unlock(&mutex);return result;}
 bool DownloadManager::snapshot(uint64_t&stamp,std::vector<DownloadRow>&out){pthread_mutex_lock(&mutex);bool result=stamp!=version;if(result){out.clear();for(auto&j:jobs)if(!j.removed)out.push_back(j);stamp=version;}pthread_mutex_unlock(&mutex);return result;}
-bool DownloadManager::enqueue(const Game&g,const TorrentLink&link,std::string&why,const std::string&metadata){pthread_mutex_lock(&mutex);if(!loadError.empty()){why=loadError;pthread_mutex_unlock(&mutex);return false;}bool ok=false;DownloadRow*existing=0;size_t visible=0;for(auto&j:jobs){if(!j.removed)visible++;if(j.url==link.url&&!existing)existing=&j;}if(!sourceURL(link.url)&&!isDiagnosticTorrent(link.url))why="Only catalogue torrents and the built-in connection probe can be queued.";else if(!metadata.empty()&&(metadata[0]!='d'||metadata.size()>8*1024*1024))why="The cached torrent file is invalid or too large.";else if(existing){if(existing->deleteFiles)why="File deletion is still in progress for this download.";else if(existing->removed&&visible<128){existing->removed=false;if(existing->done==0)existing->state=DownloadState::Queued;else if(existing->state!=DownloadState::Complete)existing->state=DownloadState::Queued;existing->error.clear();existing->phase=existing->done?"Restored existing download; files retained":"Queued again; downloaded files were deleted";ok=true;why="Restored the existing download instead of adding a duplicate.";saveLocked();++version;pthread_cond_broadcast(&changed);}else why="Already in Downloads. Resume the existing entry with X.";}else if(visible>=128||jobs.size()>=512)why="Download history is full.";else{int id=nextId;if(!metadata.empty()&&!writeFile(root+"/torrents/"+std::to_string(id)+".torrent",metadata))why="Could not save cached torrent data for the background service.";else{std::string base=readFile(root+"/download-location.txt");while(!base.empty()&&(base.back()=='\n'||base.back()=='\r'))base.pop_back();if(!validDownloadBase(root,base))base=root;DownloadRow j;j.id=nextId++;j.gameId=g.id;j.title=g.title+" / "+link.title;j.url=link.url;j.page=sourceURL(g.url)?g.url:"https://ps4torrent.net/";j.outputDir=base+"/downloads/"+std::to_string(j.id);j.phase=metadata.empty()?"Queued":"Queued with cached torrent file";jobs.push_back(j);saveLocked();++version;pthread_cond_broadcast(&changed);why="Added to Downloads. Press R3 to view progress.";ok=true;}}pthread_mutex_unlock(&mutex);return ok;}
+bool DownloadManager::enqueue(const Game& game, const TorrentLink& link, std::string& why,
+                              const std::string& metadata, const std::string& destination) {
+    char hash[41] = {};
+    if (!metadata.empty() && (metadata.size() > 8 * 1024 * 1024 ||
+        torrent_identity(reinterpret_cast<const unsigned char*>(metadata.data()), metadata.size(), hash) != 0)) {
+        why = "The cached torrent file is invalid or too large.";
+        return false;
+    }
+    pthread_mutex_lock(&mutex);
+    DownloadRow* existing = nullptr;
+    size_t visible = 0;
+    for (auto& row : jobs) {
+        if (!row.removed) ++visible;
+        if (row.url == link.url && !existing) existing = &row;
+    }
+    const bool retry = existing && existing->state == DownloadState::Failed && !metadata.empty();
+    bool ok = false;
+    if (!loadError.empty()) why = loadError;
+    else if (!sourceURL(link.url) && !isDiagnosticTorrent(link.url))
+        why = "Only torrents from your sources, or the built-in connection probe, can be queued.";
+    else if (existing && existing->deleteFiles) why = "File deletion is still in progress for this download.";
+    else if (existing && !existing->removed && !retry) why = "Already in Downloads. Resume the existing entry with X.";
+    else if ((!existing || existing->removed) && (visible >= 128 || (!existing && jobs.size() >= 512)))
+        why = "Download history is full.";
+    else if (existing && hash[0] && !existing->infoHash.empty() && existing->infoHash != hash)
+        why = "This link now serves a different torrent. Choose another source.";
+    else {
+        const int id = existing ? existing->id : nextId;
+        const auto path = root + "/torrents/" + std::to_string(id) + ".torrent";
+        if (!metadata.empty() && !durableReplace(path, metadata, 0644)) {
+            why = "Could not save cached torrent data for the background service.";
+        } else {
+            if (existing) {
+                existing->removed = false;
+                if (existing->state != DownloadState::Complete) {
+                    existing->state = DownloadState::Queued;
+                    existing->phase = "Queued for resume";
+                }
+                existing->error.clear();
+                why = "Restored the existing download instead of adding a duplicate.";
+            } else {
+                std::string base = destination.empty() ? readFile(root + "/download-location.txt") : destination;
+                while (!base.empty() && (base.back() == '\n' || base.back() == '\r')) base.pop_back();
+                base = migratedDownloadPath(root, base);
+                if (!validDownloadBase(root, base)) base = root;
+                DownloadRow row;
+                row.id = nextId++;
+                row.gameId = game.id;
+                row.title = game.title + " / " + link.title;
+                row.url = link.url;
+                row.page = sourceURL(game.url) ? game.url : "";
+                row.outputDir = base + "/downloads/" + std::to_string(id);
+                row.phase = metadata.empty() ? "Queued" : "Queued with cached torrent file";
+                jobs.push_back(std::move(row));
+                why = "Added to Downloads.";
+            }
+#ifndef PORTAL_HOST
+            portalNetworkTrace("queue metadata job=%d restored=%d handed_bytes=%zu", id, existing != nullptr, metadata.size());
+#endif
+            saveLocked();
+            ++version;
+            pthread_cond_broadcast(&changed);
+            ok = true;
+        }
+    }
+    pthread_mutex_unlock(&mutex);
+    return ok;
+}
 void DownloadManager::remove(int id,bool deleteFiles){pthread_mutex_lock(&mutex);auto*j=findLocked(id);if(j){if(deleteFiles){if(j->deleteFiles){pthread_mutex_unlock(&mutex);return;}j->deleteFiles=true;j->error.clear();bool active=false;for(int i=0;i<workerCount;i++)if(workerContexts[i].jobId==id)active=true;if(active){j->state=DownloadState::Pausing;j->phase="Stopping before deleting downloaded files";}else{j->state=DownloadState::Cancelled;j->phase="Waiting to delete downloaded files";}}else{j->removed=true;j->deleteFiles=false;if(j->state!=DownloadState::Complete)j->state=DownloadState::Cancelled;j->phase="Removed from Downloads; files kept";}j->rate=0;++version;saveLocked();pthread_cond_broadcast(&changed);}pthread_mutex_unlock(&mutex);}
 void DownloadManager::toggle(int id){pthread_mutex_lock(&mutex);auto*j=findLocked(id);if(j){if(j->state==DownloadState::Active){j->state=DownloadState::Pausing;j->phase="Pausing; keeping downloaded pieces";}else if(j->state==DownloadState::Queued){j->state=DownloadState::Paused;j->phase="Paused";}else if(j->state==DownloadState::Paused||j->state==DownloadState::Failed||j->state==DownloadState::Cancelled){j->state=DownloadState::Queued;j->phase="Queued for resume";j->error.clear();}++version;saveLocked();pthread_cond_broadcast(&changed);}pthread_mutex_unlock(&mutex);}
 void DownloadManager::setPaused(int id,bool pause){pthread_mutex_lock(&mutex);auto*j=findLocked(id);if(j){if(pause&&j->state==DownloadState::Active){j->state=DownloadState::Pausing;j->phase="Pausing; keeping downloaded pieces";}else if(pause&&j->state==DownloadState::Queued){j->state=DownloadState::Paused;j->phase="Paused";}else if(!pause&&(j->state==DownloadState::Paused||j->state==DownloadState::Failed||j->state==DownloadState::Cancelled)){j->state=DownloadState::Queued;j->phase="Queued for resume";j->error.clear();}++version;saveLocked();pthread_cond_broadcast(&changed);}pthread_mutex_unlock(&mutex);}
 void DownloadManager::cancel(int id){pthread_mutex_lock(&mutex);auto*j=findLocked(id);if(j&&j->state!=DownloadState::Complete){j->state=DownloadState::Cancelled;j->phase="Cancelled; files kept on disk";j->rate=0;++version;saveLocked();pthread_cond_broadcast(&changed);}pthread_mutex_unlock(&mutex);}
 int DownloadManager::stopped(void*p){auto*w=static_cast<WorkerContext*>(p);auto*m=w->manager;pthread_mutex_lock(&m->mutex);auto*j=m->findLocked(w->jobId);bool stop=m->quitting||!j||j->state!=DownloadState::Active||(j&&isDiagnosticTorrent(j->url)&&j->done>0);pthread_mutex_unlock(&m->mutex);return stop;}
 unsigned char* DownloadManager::http(void*p,const char*url,size_t*n){auto*w=static_cast<WorkerContext*>(p);auto*m=w->manager;std::string s;*n=0;if(stopped(p)||!m->fetch(url,s,8*1024*1024,""))return 0;auto*b=static_cast<unsigned char*>(malloc(s.size()));if(!b)return 0;memcpy(b,s.data(),s.size());*n=s.size();return b;}
-void DownloadManager::progress(void*p,const char*phase,uint64_t done,uint64_t total,unsigned peers){auto*w=static_cast<WorkerContext*>(p);auto*m=w->manager;pthread_mutex_lock(&m->mutex);auto*j=m->findLocked(w->jobId);if(j&&j->state==DownloadState::Active){double now=secondsNow();j->done=done;j->total=total;j->phase=phase;j->peers=peers;++m->version;if(now-m->lastCheckpoint>=5){m->saveLocked();m->lastCheckpoint=now;}}pthread_mutex_unlock(&m->mutex);}
+void DownloadManager::progress(void*p,const char*phase,uint64_t done,uint64_t total,unsigned peers){auto*w=static_cast<WorkerContext*>(p);auto*m=w->manager;pthread_mutex_lock(&m->mutex);auto*j=m->findLocked(w->jobId);if(j&&j->state==DownloadState::Active){double now=secondsNow();if(done||total){j->done=done;j->total=total;}j->phase=phase;j->peers=peers;++m->version;if(now-m->lastCheckpoint>=5){m->saveLocked();m->lastCheckpoint=now;}}pthread_mutex_unlock(&m->mutex);}
 void DownloadManager::traffic(void*p,uint64_t received){auto*w=static_cast<WorkerContext*>(p);auto*m=w->manager;pthread_mutex_lock(&m->mutex);auto*j=m->findLocked(w->jobId);if(j&&j->state==DownloadState::Active){double now=secondsNow(),dt=now-w->rateTime;if(dt>=.4){double instant=received>=w->rateBytes?(received-w->rateBytes)/dt:0;w->rateValue=w->rateValue*.6+instant*.4;j->rate=w->rateValue;w->rateBytes=received;w->rateTime=now;++m->version;}}pthread_mutex_unlock(&m->mutex);}
 void DownloadManager::error(void*p,const char*why){auto*w=static_cast<WorkerContext*>(p);auto*m=w->manager;pthread_mutex_lock(&m->mutex);auto*j=m->findLocked(w->jobId);if(j)j->error=why;pthread_mutex_unlock(&m->mutex);}
 void* DownloadManager::sourceEntry(void*p){static_cast<DownloadManager*>(p)->sourceLoop();return 0;}
-void DownloadManager::sourceLoop(){for(;;){pthread_mutex_lock(&mutex);while(!discovery&&!quitting)pthread_cond_wait(&changed,&mutex);if(quitting){pthread_mutex_unlock(&mutex);return;}Game g=sourceGame;discovery=false;pthread_mutex_unlock(&mutex);int source=sourceForURL(g.url);std::string s;
+void DownloadManager::sourceLoop(){for(;;){pthread_mutex_lock(&mutex);while(!discovery&&!quitting)pthread_cond_wait(&changed,&mutex);if(quitting){pthread_mutex_unlock(&mutex);return;}Game g=sourceGame;discovery=false;pthread_mutex_unlock(&mutex);const auto table=sourceSnapshot();const int source=table->indexForURL(g.url);std::string s;
 #ifndef PORTAL_HOST
 portalNetworkTrace("game-page start game=%d source=%d",g.id,source);
 #endif
-bool ok=sourceURL(g.url)&&fetch(g.url,s,4*1024*1024,sourceOrigin(source)+"/");auto found=ok?torrentLinks(s,source):std::vector<TorrentLink>{};std::string result=!ok?"Could not read the game page. Check internet and retry.":found.empty()?"No public torrent link found on this game page.":"ok";
+bool ok=source&&fetch(g.url,s,4*1024*1024,table->origin(source)+"/");auto found=ok?parseDownloadLinksWith(*table,s,source):std::vector<TorrentLink>{};std::string result=!ok?"Could not read the game page. Check internet and retry.":found.empty()?"No public torrent link found on this game page.":"ok";
 #ifndef PORTAL_HOST
 portalNetworkTrace("game-page fetched game=%d source=%d ok=%d bytes=%zu links=%zu result=%s",g.id,source,ok?1:0,s.size(),found.size(),result.c_str());
 #endif
@@ -58,9 +141,76 @@ pthread_mutex_lock(&mutex);if(sourceGame.id==g.id&&!discovery){links=found;sourc
 void DownloadManager::loop(WorkerContext*worker){for(;;){pthread_mutex_lock(&mutex);int id=0,deleteId=0;while(!quitting){for(auto&j:jobs)if(j.deleteFiles&&j.state!=DownloadState::Active&&j.state!=DownloadState::Pausing){bool reserved=false;for(int i=0;i<workerCount;i++)if(workerContexts[i].deleteJobId==j.id)reserved=true;if(!reserved){deleteId=j.id;j.phase="Deleting downloaded files";worker->deleteJobId=deleteId;++version;saveLocked();break;}}if(deleteId)break;for(auto&j:jobs)if(j.state==DownloadState::Queued){id=j.id;break;}if(id)break;pthread_cond_wait(&changed,&mutex);}if(quitting){pthread_mutex_unlock(&mutex);return;}
     if(deleteId){auto*pending=findLocked(deleteId);std::string deleteDir=pending?pending->outputDir:defaultDownloadDir(root,deleteId);pthread_mutex_unlock(&mutex);bool ok=removeDownloadFiles(root,deleteId,deleteDir);int code=errno;pthread_mutex_lock(&mutex);auto*j=findLocked(deleteId);if(j){j->deleteFiles=false;j->rate=0;j->peers=0;if(ok){j->removed=true;j->state=DownloadState::Cancelled;j->phase="Removed; downloaded files deleted";j->error.clear();j->infoHash.clear();j->done=j->total=0;}else{j->state=DownloadState::Failed;j->phase="File deletion failed";j->error="Could not delete downloaded files: "+std::string(strerror(code));}++version;saveLocked();}worker->deleteJobId=0;pthread_cond_broadcast(&changed);pthread_mutex_unlock(&mutex);continue;}
     auto*j=findLocked(id);DownloadRow job=*j;j->state=DownloadState::Active;j->phase="Fetching torrent file";j->error.clear();j->rate=0;worker->jobId=id;worker->rateTime=secondsNow();worker->rateBytes=0;worker->rateValue=0;++version;saveLocked();pthread_mutex_unlock(&mutex);
-    std::string path=root+"/torrents/"+std::to_string(id)+".torrent",dest=validDownloadDir(root,id,job.outputDir)?job.outputDir:defaultDownloadDir(root,id);auto meta=readFile(path);int result=-1;if(meta.empty()){if(!stopped(worker)&&fetch(job.url,meta,8*1024*1024,job.page)&&!meta.empty()&&meta[0]=='d'){if(!writeFile(path,meta)){error(worker,"Cannot save torrent metadata to disk");meta.clear();}}else{error(worker,"Could not fetch a torrent file. The source site may require a browser login.");meta.clear();}}
-    if(!meta.empty()&&!stopped(worker)){char hash[41];if(torrent_identity((const unsigned char*)meta.data(),meta.size(),hash)==0){pthread_mutex_lock(&mutex);auto*current=findLocked(id);if(current){current->infoHash=hash;for(auto&other:jobs)if(other.id!=id&&other.infoHash==hash){if(other.removed&&!other.deleteFiles){other.removed=false;if(other.state!=DownloadState::Complete)other.state=DownloadState::Queued;other.error.clear();other.phase="Restored existing torrent; duplicate transfer skipped";}current->infoHash.clear();current->removed=true;current->state=DownloadState::Cancelled;current->error="Duplicate torrent: using existing download #"+std::to_string(other.id);break;}saveLocked();++version;}pthread_mutex_unlock(&mutex);}}
-    if(!meta.empty()&&!stopped(worker)){torrent_callbacks cb={worker,http,stopped,progress,error,traffic};result=torrent_run(path.c_str(),dest.c_str(),&cb);}
+    std::string path=root+"/torrents/"+std::to_string(id)+".torrent",dest=validDownloadDir(root,id,job.outputDir)?job.outputDir:defaultDownloadDir(root,id);auto parent=dest.substr(0,dest.rfind('/'));
+    const auto base=parent.substr(0,parent.rfind('/'));
+    const auto volume=downloadVolume(root,base);
+    bool safe=(volume==root||mountedUsbVolume(volume))&&downloadDirectoryChain(base)&&downloadDirectoryChain(parent,true);
+    struct stat parentInfo={};
+    if(safe&&portalPathInfo(parent.c_str(),&parentInfo)==0)safe=downloadDirectoryChain(dest,true);
+    std::string meta;
+    int result=-1;
+    if(safe)meta=readFile(path);
+    else error(worker,"Download folder is unavailable or unsafe. Reconnect its drive and retry.");
+    if(safe && meta.empty() && !sourceURL(job.url) && !isDiagnosticTorrent(job.url)) {
+        error(worker,"Restore this catalogue source in Settings to fetch the torrent file.");
+    } else if (safe && meta.empty() && !stopped(worker)) {
+        if (!fetch(job.url, meta, 8 * 1024 * 1024, job.page)) {
+            error(worker, "Could not reach the torrent source. Press X to retry.");
+            meta.clear();
+        } else {
+            char hash[41];
+            if (torrent_identity(reinterpret_cast<const unsigned char*>(meta.data()), meta.size(), hash) != 0) {
+                error(worker, "The source returned an invalid torrent file. Try another source or retry.");
+                meta.clear();
+            } else if (!durableReplace(path, meta, 0644)) {
+                error(worker, "Cannot save torrent metadata to disk");
+                meta.clear();
+            }
+        }
+    }
+    if (!meta.empty() && !stopped(worker)) {
+        char hash[41];
+        if (torrent_identity(reinterpret_cast<const unsigned char*>(meta.data()), meta.size(), hash) == 0) {
+            pthread_mutex_lock(&mutex);
+            if (auto* current = findLocked(id)) {
+                current->infoHash = hash;
+                for (auto& other : jobs) {
+                    if (other.id == id || other.infoHash != hash) continue;
+                    if ((other.removed || other.state == DownloadState::Failed) && !other.deleteFiles) {
+                        const auto oldPath = root + "/torrents/" + std::to_string(other.id) + ".torrent";
+                        if (other.state != DownloadState::Complete && !durableReplace(oldPath, meta, 0644)) {
+                            current->infoHash.clear();
+                            current->state = DownloadState::Failed;
+                            current->error = "Cannot save torrent metadata to disk";
+                            current->phase = stateName(current->state);
+                            break;
+                        }
+                        other.removed = false;
+                        if (other.state != DownloadState::Complete) other.state = DownloadState::Queued;
+                        other.error.clear();
+                        other.phase = "Restored existing torrent; duplicate transfer skipped";
+                    }
+                    current->infoHash.clear();
+                    current->removed = true;
+                    current->state = DownloadState::Cancelled;
+                    current->error = "Duplicate torrent: using existing download #" + std::to_string(other.id);
+                    break;
+                }
+                saveLocked();
+                ++version;
+            }
+            pthread_mutex_unlock(&mutex);
+        }
+    }
+    if(!meta.empty()&&!stopped(worker)){torrent_callbacks cb={worker,http,stopped,progress,error,traffic};
+        // With a Debrid service chosen in Settings the service fetches the torrent and the files come from it.
+        DebridConfig debrid=isDiagnosticTorrent(job.url)?DebridConfig():debridConfig(root);const DebridNet*net=debridNetwork();
+        if(debrid.enabled()&&net){
+#ifndef PORTAL_HOST
+            portalNetworkTrace("debrid start job=%d service=%s",id,debridServiceName(debrid.service));
+#endif
+            result=debridRun(*net,debrid,meta,path+".debrid",dest,&cb);}
+        else result=torrent_run(path.c_str(),dest.c_str(),&cb);}
     pthread_mutex_lock(&mutex);j=findLocked(id);bool cleanup=j&&j->deleteFiles;if(cleanup){j->state=DownloadState::Cancelled;j->phase="Deleting downloaded files";j->rate=0;j->peers=0;worker->jobId=0;worker->deleteJobId=id;saveLocked();++version;pthread_mutex_unlock(&mutex);bool ok=removeDownloadFiles(root,id,job.outputDir);int code=errno;pthread_mutex_lock(&mutex);j=findLocked(id);if(j){j->deleteFiles=false;if(ok){j->removed=true;j->state=DownloadState::Cancelled;j->phase="Removed; downloaded files deleted";j->error.clear();j->infoHash.clear();j->done=j->total=0;}else{j->state=DownloadState::Failed;j->phase="File deletion failed";j->error="Could not delete downloaded files: "+std::string(strerror(code));}saveLocked();++version;}worker->deleteJobId=0;pthread_cond_broadcast(&changed);pthread_mutex_unlock(&mutex);continue;}
     if(j){if(j->state==DownloadState::Pausing){j->state=DownloadState::Paused;j->phase="Paused";}else if(j->state==DownloadState::Active){j->state=quitting?DownloadState::Queued:result==0?DownloadState::Complete:result==1?DownloadState::Paused:DownloadState::Failed;j->phase=isDiagnosticTorrent(j->url)&&j->done?"Connection test passed: received a verified piece from a peer":stateName(j->state);}j->rate=0;j->peers=0;saveLocked();++version;}worker->jobId=0;pthread_mutex_unlock(&mutex);
 }}

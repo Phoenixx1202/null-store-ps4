@@ -1,0 +1,127 @@
+# Builds NULL_store on every push and pull request, and on demand.
+#
+# The artifact is the store's test package (the same as `make test-package`):
+# everything except the background service's compatibility module, which is
+# not part of this repository (see BUILDING.md). It installs and runs on a
+# console with HEN like the release package.
+name: Build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  OPENORBIS_VERSION: v0.5.4
+  # PkgTool runs on .NET; without ICU data it needs the invariant culture.
+  DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: '1'
+
+jobs:
+  build:
+    name: PS4 package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM, make and Python
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld llvm make nasm python3 python3-pil
+          clang --version
+          ld.lld --version
+
+      - name: Cache the OpenOrbis toolchain
+        id: toolchain-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/openorbis
+          key: openorbis-${{ env.OPENORBIS_VERSION }}
+
+      - name: Download the OpenOrbis toolchain
+        if: steps.toolchain-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/openorbis"
+          curl -fsSL -o "$RUNNER_TEMP/openorbis.tar.gz" \
+            "https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/download/${OPENORBIS_VERSION}/toolchain-llvm-18.tar.gz"
+          tar -xzf "$RUNNER_TEMP/openorbis.tar.gz" -C "$RUNNER_TEMP/openorbis"
+          rm "$RUNNER_TEMP/openorbis.tar.gz"
+
+      - name: Locate the toolchain
+        run: |
+          crt="$(find "$RUNNER_TEMP/openorbis" -path '*/lib/crt1.o' | head -n 1)"
+          if [ -z "$crt" ]; then
+            echo "::error::lib/crt1.o not found in the OpenOrbis ${OPENORBIS_VERSION} archive"
+            exit 1
+          fi
+          root="$(dirname "$(dirname "$crt")")"
+          echo "OO_PS4_TOOLCHAIN=$root" >> "$GITHUB_ENV"
+          chmod +x "$root"/bin/linux/* || true
+          # The store loads internal system modules the v0.5.2 headers do not declare.
+          grep -rq ORBIS_SYSMODULE_INTERNAL_PAD "$root/include" || {
+            echo "::error::OpenOrbis ${OPENORBIS_VERSION} lacks ORBIS_SYSMODULE_INTERNAL_PAD"
+            exit 1
+          }
+          ls "$root/bin/linux"
+
+      - name: Build the store, the setup app and the service
+        run: make -j"$(nproc)" eboot build/service-installer.bin build/packaged-worker.bin
+
+      # PkgTool (.NET Core 3.1) needs OpenSSL 1.1, which Ubuntu 24.04 lacks:
+      # tools/ci/pkgtool.sh runs it in an Ubuntu 20.04 container.
+      - name: Build the test package
+        run: make test-package PKGTOOL="$GITHUB_WORKSPACE/tools/ci/pkgtool.sh"
+
+      - name: Name the package after the version
+        run: |
+          version="$(python3 -c "import re;print(re.search(r\"'APP_VER':'([^']+)'\", open('tools/package.py').read()).group(1))")"
+          mkdir -p dist
+          cp build/NULL_store-test.pkg "dist/NULL_store-PS4-${version}.pkg"
+          (cd dist && sha256sum *.pkg | tee SHA256SUMS.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NULL_store-PS4
+          path: dist/
+          if-no-files-found: error
+
+  tests:
+    name: Host tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM, make and Python
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld llvm make python3
+
+      - name: Cache the OpenOrbis toolchain
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/openorbis
+          key: openorbis-${{ env.OPENORBIS_VERSION }}
+
+      - name: Download the OpenOrbis toolchain
+        run: |
+          if ! find "$RUNNER_TEMP/openorbis" -path '*/lib/crt1.o' 2>/dev/null | grep -q .; then
+            mkdir -p "$RUNNER_TEMP/openorbis"
+            curl -fsSL -o "$RUNNER_TEMP/openorbis.tar.gz" \
+              "https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/download/${OPENORBIS_VERSION}/toolchain-llvm-18.tar.gz"
+            tar -xzf "$RUNNER_TEMP/openorbis.tar.gz" -C "$RUNNER_TEMP/openorbis"
+          fi
+          crt="$(find "$RUNNER_TEMP/openorbis" -path '*/lib/crt1.o' | head -n 1)"
+          echo "OO_PS4_TOOLCHAIN=$(dirname "$(dirname "$crt")")" >> "$GITHUB_ENV"
+
+      # The headers of the toolchain are used by the host checks (tests/tests.mk).
+      - name: Debrid, translations and PlayStation Store art
+        run: |
+          mkdir -p build
+          make test-debrid test-i18n test-sony-art
+
+      - name: Full host suite
+        run: make test

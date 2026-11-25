@@ -17,5 +17,5 @@ public:
     DownloadManager(std::string,DownloadFetch);~DownloadManager();
     const std::string& startupError()const{return loadError;}
     bool start();void discover(const Game&);bool takeSources(std::vector<TorrentLink>&,std::string&,std::string&);
-    bool enqueue(const Game&,const TorrentLink&,std::string&,const std::string& metadata="");void toggle(int);void setPaused(int,bool);void cancel(int);void remove(int,bool deleteFiles=false);bool snapshot(uint64_t&,std::vector<DownloadRow>&);
+    bool enqueue(const Game&,const TorrentLink&,std::string&,const std::string& metadata="",const std::string& destination="");void toggle(int);void setPaused(int,bool);void cancel(int);void remove(int,bool deleteFiles=false);bool snapshot(uint64_t&,std::vector<DownloadRow>&);
 };

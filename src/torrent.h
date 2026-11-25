@@ -16,6 +16,10 @@ typedef struct {
     void (*traffic)(void *, uint64_t);
 } torrent_callbacks;
 /* 0 completed, 1 stopped with files retained, -1 failed. Rechecks existing pieces. */
+/* Query a public HTTP tracker without announcing or joining the swarm. */
+typedef unsigned char *(*torrent_preview_fetch)(void*,const char*,size_t*);
+int torrent_swarm_preview(const unsigned char*,size_t,torrent_preview_fetch,void*,int*,int*);
+uint64_t torrent_metadata_size(const unsigned char*,size_t);
 int torrent_identity(const unsigned char*,size_t,char out[41]);
 int torrent_run(const char *metainfo, const char *destination, const torrent_callbacks *callbacks);
 #ifdef __cplusplus
